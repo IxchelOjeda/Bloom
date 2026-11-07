@@ -28,3 +28,14 @@ export function hydrationTimes(everyMin: number, wake: string, quietStart: strin
   }
   return out;
 }
+
+/**
+ * When a reminder for an item should fire. Date-only due dates ("YYYY-MM-DD") are treated
+ * as 09:00 local time that day; timestamps fire `leadMin` minutes before.
+ */
+export function reminderTimeFor(at: Date | string, leadMin: number): Date {
+  const base = typeof at === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(at)
+    ? new Date(`${at}T09:00:00`)
+    : new Date(at);
+  return new Date(base.getTime() - leadMin * 60000);
+}

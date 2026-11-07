@@ -11,7 +11,7 @@ import NetInfo from '@react-native-community/netinfo';
 import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { supabase } from './supabase';
-import { applyPending, enqueue, EMPTY, flush, load, NetworkError, Op, QueueState, save } from './offlineQueue';
+import { applyPending, enqueue, EMPTY, flushLive, load, NetworkError, Op, QueueState, save } from './offlineQueue';
 
 // Tables whose rows are changed by database triggers when *this* table is written.
 const DEPENDENTS: Record<string, string[]> = {
@@ -68,10 +68,13 @@ export async function initSync() {
 export async function syncNow() {
   if (syncing || !online || queue.pending.length === 0) return;
   syncing = true; setStatus();
-  const touched = new Set(queue.pending.map((o) => o.table));
-  queue = await flush(queue, transport);
-  await save(kv, queue);
-  syncing = false; setStatus();
+  const touched = new Set<string>();
+  try {
+    await flushLive(() => queue, async (next) => {
+      queue.pending.forEach((o) => touched.add(o.table));
+      queue = next; await save(kv, queue); setStatus();
+    }, transport);
+  } finally { syncing = false; setStatus(); }
   touched.forEach(emitChange);
 }
 
@@ -126,6 +129,8 @@ export function useRows<T extends { id: string }>(table: string, key: string, qu
   }, [table]);
 
   const refresh = useCallback(async () => {
+    // Screens can mount for a frame before the auth gate redirects; never query without a user.
+    if (!currentUser) { setLoading(false); return; }
     try {
       const builder = supabase.from(table);
       const res = await (qRef.current ? qRef.current(builder) : builder.select('*').order('created_at'));
@@ -141,6 +146,7 @@ export function useRows<T extends { id: string }>(table: string, key: string, qu
 
   useEffect(() => {
     let alive = true;
+    if (!currentUser) { setLoading(false); return; }
     AsyncStorage.getItem(cacheKey).then((raw) => { if (alive && raw) { setRows(withPending(JSON.parse(raw))); setLoading(false); } });
     void refresh();
     const off = onChange((t) => {

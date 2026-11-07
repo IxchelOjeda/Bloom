@@ -13,8 +13,11 @@ export default function BrainDump() {
   const [eventFor, setEventFor] = useState<Entry | null>(null);
 
   const add = async () => {
-    // one thought per line → paste a whole list at once
-    for (const line of text.split('\n').map((l) => l.trim()).filter(Boolean)) await db.insert('brain_dump', { content: line });
+    // one thought per line → paste a whole list at once. Inserted last-to-first so the
+    // newest-first inbox still reads in the order you typed it.
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    const base = Date.now();
+    for (let i = lines.length - 1; i >= 0; i--) await db.insert('brain_dump', { content: lines[i], created_at: new Date(base + (lines.length - i)).toISOString() });
     setText('');
   };
   const convert = async (e: Entry, to: string) => {

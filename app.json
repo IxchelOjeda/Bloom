@@ -13,14 +13,25 @@
     },
     "android": {
       "package": "com.orchid.app",
-      "permissions": ["POST_NOTIFICATIONS", "SCHEDULE_EXACT_ALARM"]
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "SCHEDULE_EXACT_ALARM"
+      ]
     },
     "plugins": [
       "expo-router",
       "expo-secure-store",
       "expo-localization",
-      ["expo-notifications", { "color": "#C98B8B" }]
+      [
+        "expo-notifications",
+        {
+          "color": "#C98B8B"
+        }
+      ],
+      "expo-asset"
     ],
-    "experiments": { "typedRoutes": true }
+    "experiments": {
+      "typedRoutes": true
+    }
   }
 }

@@ -4,18 +4,14 @@ import React from 'react';
 import { View } from 'react-native';
 import { Collection } from '@/components/Collection';
 import { useRows } from '@/lib/db';
-import { cancelFor, scheduleDaily } from '@/lib/notifications';
-import { usePreferences } from '@/lib/preferences';
+import { syncMedicationReminders } from '@/lib/notifications';
+import { Preferences, usePreferences } from '@/lib/preferences';
 import { WEEKDAY_SHORT } from '@/lib/dates';
 import { Button, Card, Txt } from '@/components/ui';
 
 interface Med { id: string; name: string; dosage: string | null; times: string[]; weekdays: number[]; start_date: string | null; end_date: string | null; instructions: string | null; reminders: boolean }
 
-async function syncReminders(m: Med, enabled: boolean) {
-  await cancelFor(m.id);
-  if (!enabled || !m.reminders) return;
-  for (const t of m.times) await scheduleDaily('medication', m.id, `Time for ${m.name}`, m.dosage ? `${m.dosage} — as you scheduled it` : 'As you scheduled it', t.slice(0, 5));
-}
+const syncReminders = (m: Med, p: Preferences) => syncMedicationReminders(p, m);
 
 function MedHistory({ m }: { m: Med }) {
   const logs = useRows<{ id: string; scheduled_for: string; status: string }>('medication_logs', `medlogs:${m.id}`,
@@ -25,7 +21,7 @@ function MedHistory({ m }: { m: Med }) {
     <View style={{ gap: 4 }}>
       {logs.slice(0, 5).map((l) => <Txt key={l.id} size={12} muted>{format(new Date(l.scheduled_for), 'EEE h:mm a')} — {l.status}</Txt>)}
       {m.reminders && prefs.notifications.enabled ? (
-        <Button small kind="ghost" label="Refresh reminders" onPress={() => syncReminders(m, true)} />
+        <Button small kind="ghost" label="Refresh reminders" onPress={() => syncReminders(m, prefs)} />
       ) : null}
     </View>
   );
@@ -52,7 +48,7 @@ export default function Meds() {
           { key: 'reminders', label: 'Remind me', type: 'bool', hint: 'Medication reminders are never moved by quiet hours' },
         ]}
         defaults={{ times: [], weekdays: [0, 1, 2, 3, 4, 5, 6], reminders: true }}
-        afterSave={(m) => syncReminders(m, prefs.notifications.enabled && prefs.notifications.meds)}
+        afterSave={(m) => syncReminders(m, prefs)}
         itemTitle={(m) => m.name}
         itemSub={(m) => [m.dosage, m.times.map((t) => t.slice(0, 5)).join(', '), m.weekdays.length < 7 && m.weekdays.map((d) => WEEKDAY_SHORT[d]).join(' ')].filter(Boolean).join(' · ')}
         itemExtra={(m) => <MedHistory m={m} />}

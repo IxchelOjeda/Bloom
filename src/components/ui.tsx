@@ -3,7 +3,7 @@
  * theme, so switching aesthetics restyles the whole app — not just a wallpaper.
  */
 import { Ionicons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
+import { haptic } from '@/lib/haptics';
 import React from 'react';
 import {
   ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleProp,
@@ -106,7 +106,7 @@ export function Button({ label, onPress, kind = 'primary', icon, loading, disabl
   const fg = kind === 'primary' ? t.colors.onPrimary : kind === 'danger' ? '#FFFFFF' : t.colors.primary;
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled || loading}
-      onPress={() => { void Haptics.selectionAsync(); onPress(); }}
+      onPress={() => { haptic.tap(); onPress(); }}
       style={({ pressed }) => ({ backgroundColor: bg, opacity: disabled ? 0.5 : pressed ? 0.85 : 1, borderRadius: t.radius.pill,
         paddingVertical: small ? 8 : 13, paddingHorizontal: small ? 14 : 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 44 })}>
       {loading ? <ActivityIndicator color={fg} /> : icon ? <Ionicons name={icon} size={small ? 16 : 18} color={fg} /> : null}
@@ -128,7 +128,7 @@ export function IconButton({ icon, onPress, label, color }: { icon: IconName; on
 export function Chip({ label, selected, onPress, icon }: { label: string; selected?: boolean; onPress?: () => void; icon?: IconName }) {
   const t = useTheme();
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={{ selected }}
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected }}
       style={{ paddingVertical: 7, paddingHorizontal: 12, borderRadius: t.radius.pill, flexDirection: 'row', gap: 6, alignItems: 'center',
         backgroundColor: selected ? t.colors.primary : t.colors.surface, borderWidth: 1, borderColor: selected ? t.colors.primary : t.colors.border }}>
       {icon ? <Ionicons name={icon} size={14} color={selected ? t.colors.onPrimary : t.colors.textMuted} /> : null}
@@ -146,7 +146,7 @@ export function Field({ label, ...props }: TextInputProps & { label?: string }) 
   return (
     <View style={{ gap: 4 }}>
       {label ? <Txt size={13} muted>{label}</Txt> : null}
-      <TextInput placeholderTextColor={t.colors.textMuted} accessibilityLabel={label}
+      <TextInput placeholderTextColor={t.colors.textMuted} accessibilityLabel={label ?? props.placeholder?.split('\n')[0]}
         {...props}
         style={[{ backgroundColor: t.colors.surface, color: t.colors.text, borderColor: t.colors.border, borderWidth: 1, borderRadius: t.radius.sm,
           paddingHorizontal: 12, paddingVertical: 11, fontSize: 16, minHeight: props.multiline ? 90 : 46, textAlignVertical: props.multiline ? 'top' : 'center' }, props.style]} />
@@ -181,7 +181,7 @@ export function Progress({ value, height = 8 }: { value: number; height?: number
 export function Check({ done, onPress, label }: { done: boolean; onPress: () => void; label: string }) {
   const t = useTheme();
   return (
-    <Pressable onPress={() => { void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress(); }} hitSlop={10}
+    <Pressable onPress={() => { haptic.light(); onPress(); }} hitSlop={10}
       accessibilityRole="checkbox" accessibilityState={{ checked: done }} accessibilityLabel={label}
       style={{ width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: t.colors.primary, backgroundColor: done ? t.colors.primary : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
       {done ? <Ionicons name="checkmark" size={16} color={t.colors.onPrimary} /> : null}

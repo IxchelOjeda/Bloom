@@ -47,23 +47,37 @@ export function enqueue(state: QueueState, op: Op): QueueState {
   return { ...state, pending };
 }
 
-export async function flush(state: QueueState, t: Transport): Promise<QueueState> {
-  const pending = [...state.pending];
-  const failed = [...state.failed];
-  while (pending.length) {
-    const op = pending[0];
+/** Remove exactly this op (by identity). If it was coalesced with a newer edit while in flight, the newer op stays queued. */
+export function settle(state: QueueState, op: Op, error?: string): QueueState {
+  const pending = state.pending.filter((p) => p !== op);
+  return error === undefined ? { ...state, pending } : { pending, failed: [...state.failed, { op, error }] };
+}
+
+/**
+ * Sends queued ops in order. Reads the queue through get()/set() on every step, so ops enqueued
+ * *while* a flush is in flight are kept (never overwritten by a stale snapshot).
+ */
+export async function flushLive(get: () => QueueState, set: (s: QueueState) => Promise<void> | void, t: Transport): Promise<void> {
+  for (;;) {
+    const op = get().pending[0];
+    if (!op) return;
     try {
       if (op.kind === 'insert') await t.insert(op.table, op.row);
       else if (op.kind === 'patch') await t.patch(op.table, op.id, op.patch);
       else await t.remove(op.table, op.id);
-      pending.shift();
+      await set(settle(get(), op));
     } catch (e) {
-      if (e instanceof NetworkError) break;                       // keep order, retry later
-      failed.push({ op, error: e instanceof Error ? e.message : String(e) });
-      pending.shift();
+      if (e instanceof NetworkError) return;                      // keep order, retry later
+      await set(settle(get(), op, e instanceof Error ? e.message : String(e)));
     }
   }
-  return { pending, failed };
+}
+
+/** Snapshot variant (used by tests and one-shot flushes). */
+export async function flush(state: QueueState, t: Transport): Promise<QueueState> {
+  let cur = state;
+  await flushLive(() => cur, (s) => { cur = s; }, t);
+  return cur;
 }
 
 export const EMPTY: QueueState = { pending: [], failed: [] };

@@ -5,6 +5,7 @@ import { Pressable, View } from 'react-native';
 import { db, useRows } from '@/lib/db';
 import { dayRange, greeting, hm, ymd } from '@/lib/dates';
 import { formatMoney } from '@/lib/finance';
+import { snoozeMedication } from '@/lib/notifications';
 import { DashboardSection, usePreferences } from '@/lib/preferences';
 import { useTheme } from '@/theme/ThemeProvider';
 import { EventRow, EventSheet, RescheduleSheet, Task, TaskSheet } from '@/components/sheets';
@@ -39,6 +40,7 @@ export default function Today() {
   const minDay = useRows<{ id: string; items: { label: string; done: boolean }[] }>('minimum_days', `minday:${today}`, (q) => q.select('*').eq('date', today)).rows[0];
   const focus = useRows<{ id: string; minutes: number }>('focus_sessions', `focus:${today}`, (q) => q.select('id,minutes').eq('kind', 'focus').gte('started_at', from)).rows;
   const energy = useRows<{ id: string; level: string }>('energy_logs', `energy:${today}`, (q) => q.select('*').eq('date', today)).rows[0];
+  const dayFlag = useRows<{ id: string; date: string; kind: string }>('day_flags', `flag:${today}`, (q) => q.select('*').eq('date', today), (f) => f.date === today).rows[0];
 
   // ---- local UI state ----
   const [taskSheet, setTaskSheet] = useState<{ open: boolean; task?: Task | null }>({ open: false });
@@ -112,7 +114,9 @@ export default function Today() {
           ))}</Card>}
         <Row wrap>
           <Chip icon="cafe-outline" label="Add break" onPress={() => void db.insert('events', { title: 'Break', kind: 'break', starts_at: new Date().toISOString(), ends_at: new Date(Date.now() + 15 * 60000).toISOString(), done: false })} />
-          <Chip icon="bed-outline" label="Make today a rest day" onPress={() => void db.insert('day_flags', { date: today, kind: 'rest' })} />
+          {dayFlag
+            ? <Chip icon="bed" selected label={`${dayFlag.kind === 'rest' ? 'Rest day' : dayFlag.kind.replace('_', ' ')} · undo`} onPress={() => void db.remove('day_flags', dayFlag.id)} />
+            : <Chip icon="bed-outline" label="Make today a rest day" onPress={() => void db.insert('day_flags', { date: today, kind: 'rest' })} />}
         </Row>
       </Section>
     ),
@@ -162,6 +166,7 @@ export default function Today() {
             {m.log ? <Pill label={m.log.status} tone={m.log.status === 'taken' ? 'success' : 'neutral'} /> : null}
             <Chip label="Taken" selected={m.log?.status === 'taken'} onPress={() => void logMed(m, 'taken')} />
             <Chip label="Skip" selected={m.log?.status === 'skipped'} onPress={() => void logMed(m, 'skipped')} />
+            <Chip label="Snooze" selected={m.log?.status === 'snoozed'} onPress={() => { void logMed(m, 'snoozed'); void snoozeMedication(m.med.name, 10, prefs); }} />
           </Row>
         ))}</Card>
       </Section>

@@ -1,6 +1,6 @@
 import { Stack } from 'expo-router';
 import { startOfDay, subDays } from 'date-fns';
-import * as Haptics from 'expo-haptics';
+import { haptic } from '@/lib/haptics';
 import React, { useEffect, useRef, useState } from 'react';
 import { AppState, View } from 'react-native';
 import { db, useRows } from '@/lib/db';
@@ -59,7 +59,7 @@ export default function Focus() {
       await db.insert('focus_sessions', { task_id: taskId, activity_id: actId ?? task?.activity_id ?? null, started_at: (startedAt.current ?? new Date()).toISOString(), minutes: Math.min(600, elapsedMin), kind: 'focus' });
     }
     startedAt.current = null;
-    if (natural) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    if (natural) haptic.success();
     const next: Phase = phase === 'focus' ? (round % p.rounds === 0 ? 'long' : 'short') : 'focus';
     if (phase !== 'focus') setRound((r) => r + 1);
     setPhase(next); setRemaining(phaseLen(next));

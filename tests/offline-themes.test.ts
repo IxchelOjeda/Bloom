@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { enqueue, flush, applyPending, EMPTY, NetworkError, Transport } from '../src/lib/offlineQueue';
+import { enqueue, flush, flushLive, applyPending, EMPTY, NetworkError, QueueState, Transport } from '../src/lib/offlineQueue';
 import { THEMES, buildTheme, contrast } from '../src/theme/themes';
 import { adjustForQuietHours, hydrationTimes, isQuiet } from '../src/lib/quietHours';
 
@@ -91,4 +91,37 @@ test('quiet hours across midnight', () => {
 test('hydration reminders are capped to avoid overload', () => {
   assert.equal(hydrationTimes(30, '07:00', '22:00').length, 8);
   assert.deepEqual(hydrationTimes(180, '08:00', '22:00'), ['11:00', '14:00', '17:00', '20:00']);
+});
+
+test('ops enqueued while a flush is in flight are not lost (regression)', async () => {
+  let q: QueueState = EMPTY;
+  const sent: string[] = [];
+  const t: Transport = {
+    async insert(_t, row) {
+      sent.push(String(row.n));
+      // the UI keeps writing while the first request is on the wire
+      if (row.n === 1) for (let i = 2; i <= 5; i++) q = enqueue(q, { kind: 'insert', table: 'categories', id: `id${i}`, row: { n: i }, ts: i });
+    },
+    async patch() {}, async remove() {},
+  };
+  q = enqueue(q, { kind: 'insert', table: 'categories', id: 'id1', row: { n: 1 }, ts: 1 });
+  await flushLive(() => q, (s) => { q = s; }, t);
+  assert.deepEqual(sent, ['1', '2', '3', '4', '5']);
+  assert.equal(q.pending.length, 0);
+});
+
+test('an edit coalesced into an in-flight insert is still sent afterwards', async () => {
+  let q: QueueState = EMPTY;
+  const rows: Record<string, unknown>[] = [];
+  const t: Transport = {
+    async insert(_t, row) {
+      rows.push(row);
+      if (rows.length === 1) q = enqueue(q, { kind: 'patch', table: 'tasks', id: 'a', patch: { title: 'edited' }, ts: 2 });
+    },
+    async patch() {}, async remove() {},
+  };
+  q = enqueue(q, { kind: 'insert', table: 'tasks', id: 'a', row: { id: 'a', title: 'first' }, ts: 1 });
+  await flushLive(() => q, (s) => { q = s; }, t);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1].title, 'edited');
 });

@@ -42,7 +42,7 @@ export const supabase = createClient(url ?? 'http://localhost', anon ?? 'missing
 
 /** Calls an Edge Function with the user's JWT; API keys stay server-side. */
 export async function callFunction<T>(name: string, body: unknown): Promise<T> {
-  const { data, error } = await supabase.functions.invoke(name, { body });
+  const { data, error } = await supabase.functions.invoke(name, { body: body as Record<string, unknown> });
   if (error) {
     let msg = error.message;
     try { const ctx = await (error as any).context?.json?.(); if (ctx?.error) msg = ctx.error; } catch {}

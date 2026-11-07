@@ -1,6 +1,6 @@
 -- Runs after the migration. Fails loudly (ON_ERROR_STOP) on any broken expectation.
 \set ON_ERROR_STOP on
-grant select, insert, update, delete on all tables in schema public to authenticated;
+-- grants now come from migration 0003
 
 insert into auth.users values ('11111111-1111-1111-1111-111111111111','a@x'), ('22222222-2222-2222-2222-222222222222','b@x');
 
