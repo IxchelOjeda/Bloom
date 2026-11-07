@@ -6,7 +6,8 @@ import { db, useRows } from '@/lib/db';
 import { dayRange, greeting, hm, ymd } from '@/lib/dates';
 import { formatMoney } from '@/lib/finance';
 import { snoozeMedication } from '@/lib/notifications';
-import { DashboardSection, usePreferences } from '@/lib/preferences';
+import { useDeviceEvents } from '@/lib/useDeviceEvents';
+import { DashboardSection, usePreferences, WidgetSize } from '@/lib/preferences';
 import { useTheme } from '@/theme/ThemeProvider';
 import { EventRow, EventSheet, RescheduleSheet, Task, TaskSheet } from '@/components/sheets';
 import { Button, Card, Check, Chip, Empty, Field, IconButton, IconName, Pill, Progress, Row, Screen, Section, Sheet, Title, Txt } from '@/components/ui';
@@ -17,6 +18,13 @@ const SECTION_LABEL: Record<DashboardSection, string> = {
 };
 const ALL_SECTIONS = Object.keys(SECTION_LABEL) as DashboardSection[];
 const SLOTS = ['breakfast', 'lunch', 'dinner', 'snack', 'drink'] as const;
+/** Time-blindness friendly: "starts in 25 min", "in 2 h 10 min", "happening now". */
+const untilText = (iso: string) => {
+  const m = Math.round((+new Date(iso) - Date.now()) / 60000);
+  if (m <= 0) return 'happening now';
+  return m < 60 ? `starts in ${m} min` : `in ${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`;
+};
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 export default function Today() {
   const t = useTheme();
@@ -42,6 +50,9 @@ export default function Today() {
   const energy = useRows<{ id: string; level: string }>('energy_logs', `energy:${today}`, (q) => q.select('*').eq('date', today)).rows[0];
   const dayFlag = useRows<{ id: string; date: string; kind: string }>('day_flags', `flag:${today}`, (q) => q.select('*').eq('date', today), (f) => f.date === today).rows[0];
 
+  const [dayBounds] = useState(() => ({ from: new Date(from), to: new Date(to) }));
+  const phone = useDeviceEvents(dayBounds.from, dayBounds.to, events.map((e) => e.external_ref?.device?.eventId).filter(Boolean) as string[]);
+
   // ---- local UI state ----
   const [taskSheet, setTaskSheet] = useState<{ open: boolean; task?: Task | null }>({ open: false });
   const [eventSheet, setEventSheet] = useState<{ open: boolean; event?: EventRow | null }>({ open: false });
@@ -49,6 +60,12 @@ export default function Today() {
   const [customize, setCustomize] = useState(false);
   const [minEdit, setMinEdit] = useState(false);
   const [restartDismissed, setRestartDismissed] = useState(false);
+
+  // widget sizes: compact shows the top 3, regular 8, large everything
+  const sizeOf = (sec: DashboardSection): WidgetSize => prefs.dashboard_sizes?.[sec] ?? 'regular';
+  const cap = <X,>(sec: DashboardSection, arr: X[]) => sizeOf(sec) === 'large' ? arr : arr.slice(0, sizeOf(sec) === 'compact' ? 3 : 8);
+  const More = ({ sec, total, go }: { sec: DashboardSection; total: number; go: () => void }) =>
+    total > cap(sec, Array.from({ length: total })).length ? <Pressable onPress={go} accessibilityRole="link"><Txt size={13} color={t.colors.primary}>+{total - cap(sec, Array.from({ length: total })).length} more</Txt></Pressable> : null;
 
   const waterTotal = water.reduce((s, w) => s + w.amount_ml, 0);
   const todaysMeds = useMemo(() => meds.filter((m) => m.weekdays.includes(new Date().getDay())).flatMap((m) =>
@@ -99,9 +116,12 @@ export default function Today() {
     timeline: (
       <Section title="Timeline" action={{ label: 'Add', onPress: () => setEventSheet({ open: true }) }}>
         {nextEvent ? <Card tone="soft"><Txt size={13} muted>Up next</Txt><Txt weight="600">{nextEvent.title}</Txt>
-          <Txt size={13} muted>{hm(nextEvent.starts_at)} – {hm(nextEvent.ends_at)} · {Math.max(0, Math.round((+new Date(nextEvent.starts_at) - Date.now()) / 60000))} min away</Txt></Card> : null}
-        {events.length === 0 ? <Empty icon="calendar-clear-outline" text="Nothing scheduled. That's free time." /> :
-          <Card>{events.map((e) => (
+          <Txt size={13} muted>{hm(nextEvent.starts_at)} – {hm(nextEvent.ends_at)} · {untilText(nextEvent.starts_at)}</Txt></Card> : null}
+        {phone.length ? <Card tone="alt">{phone.map((p) => (
+          <Row key={p.id}><Txt size={13} muted style={{ width: 64 }}>{p.allDay ? 'All day' : hm(p.start.toISOString())}</Txt>
+            <Txt style={{ flex: 1 }}>📱 {p.title}</Txt><Txt size={11} muted>phone calendar</Txt></Row>))}</Card> : null}
+        {events.length === 0 ? <Empty icon="calendar-clear-outline" text={phone.length ? 'Nothing else planned in Orchid.' : "Nothing scheduled. That's free time."} /> :
+          <Card>{cap('timeline', events).map((e) => (
             <Row key={e.id} style={{ paddingVertical: 4 }}>
               <Txt size={13} muted style={{ width: 64 }}>{e.all_day ? 'All day' : hm(e.starts_at)}</Txt>
               <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: e.kind === 'break' ? t.colors.success : e.kind === 'meal' ? t.colors.accent : t.colors.primary }} />
@@ -111,7 +131,7 @@ export default function Today() {
               </Pressable>
               <Check done={e.done} label={e.title} onPress={() => db.update('events', e.id, { done: !e.done })} />
             </Row>
-          ))}</Card>}
+          ))}<More sec="timeline" total={events.length} go={() => router.push('/plan/calendar')} /></Card>}
         <Row wrap>
           <Chip icon="cafe-outline" label="Add break" onPress={() => void db.insert('events', { title: 'Break', kind: 'break', starts_at: new Date().toISOString(), ends_at: new Date(Date.now() + 15 * 60000).toISOString(), done: false })} />
           {dayFlag
@@ -123,7 +143,7 @@ export default function Today() {
     tasks: (
       <Section title="Tasks" action={{ label: 'All', onPress: () => router.push('/plan/tasks') }}>
         {tasks.length === 0 ? <Empty icon="checkmark-done-outline" text="No tasks due today." action={{ label: 'Add one', onPress: () => setTaskSheet({ open: true }) }} /> :
-          <Card>{tasks.map((x) => {
+          <Card>{cap('tasks', tasks).map((x) => {
             const overdue = x.status === 'todo' && x.due_date! < today;
             return (
               <Row key={x.id} style={{ paddingVertical: 4 }}>
@@ -135,7 +155,7 @@ export default function Today() {
                 {overdue ? <Chip label="Missed?" onPress={() => setMissed(x)} /> : null}
               </Row>
             );
-          })}</Card>}
+          })}<More sec="tasks" total={tasks.length} go={() => router.push('/plan/tasks')} /></Card>}
       </Section>
     ),
     meals: prefs.modules.food ? (
@@ -159,21 +179,22 @@ export default function Today() {
     ) : null,
     meds: prefs.modules.meds && todaysMeds.length ? (
       <Section title="Medication" action={{ label: 'Manage', onPress: () => router.push('/track/meds') }}>
-        <Card>{todaysMeds.map((m) => (
-          <Row key={m.med.id + m.time}>
-            <Txt size={13} muted style={{ width: 48 }}>{m.time}</Txt>
-            <Txt style={{ flex: 1 }}>{m.med.name}{m.med.dosage ? ` · ${m.med.dosage}` : ''}</Txt>
-            {m.log ? <Pill label={m.log.status} tone={m.log.status === 'taken' ? 'success' : 'neutral'} /> : null}
-            <Chip label="Taken" selected={m.log?.status === 'taken'} onPress={() => void logMed(m, 'taken')} />
-            <Chip label="Skip" selected={m.log?.status === 'skipped'} onPress={() => void logMed(m, 'skipped')} />
-            <Chip label="Snooze" selected={m.log?.status === 'snoozed'} onPress={() => { void logMed(m, 'snoozed'); void snoozeMedication(m.med.name, 10, prefs); }} />
-          </Row>
+        <Card>{cap('meds', todaysMeds).map((m) => (
+          <View key={m.med.id + m.time} style={{ gap: 6, paddingVertical: 2 }}>
+            <Row><Txt size={13} muted style={{ width: 48 }}>{m.time}</Txt>
+              <Txt weight="600" style={{ flex: 1 }} numberOfLines={1}>{m.med.name}{m.med.dosage ? <Txt muted size={13}>{`  ${m.med.dosage}`}</Txt> : null}</Txt></Row>
+            <Row wrap style={{ paddingLeft: 56 }}>
+              <Chip icon={m.log?.status === 'taken' ? 'checkmark' : undefined} label="Taken" selected={m.log?.status === 'taken'} onPress={() => void logMed(m, 'taken')} />
+              <Chip label="Skip" selected={m.log?.status === 'skipped'} onPress={() => void logMed(m, 'skipped')} />
+              <Chip label="Snooze 10 min" selected={m.log?.status === 'snoozed'} onPress={() => { void logMed(m, 'snoozed'); void snoozeMedication(m.med.name, 10, prefs); }} />
+            </Row>
+          </View>
         ))}</Card>
       </Section>
     ) : null,
     payments: prefs.modules.money && bills.length ? (
       <Section title="Upcoming payments" action={{ label: 'Bills', onPress: () => router.push('/money/recurring') }}>
-        <Card>{bills.map((b) => (
+        <Card>{cap('payments', bills).map((b) => (
           <Row key={b.id}><Txt style={{ flex: 1 }}>{b.name}</Txt>
             <Txt size={13} muted>{b.next_due === today ? 'today' : format(new Date(b.next_due + 'T12:00'), 'EEE d')}</Txt>
             <Txt weight="600">{formatMoney(b.amount, b.currency)}</Txt></Row>
@@ -182,7 +203,7 @@ export default function Today() {
     ) : null,
     habits: prefs.modules.habits && todaysHabits.length ? (
       <Section title="Habits" action={{ label: 'All', onPress: () => router.push('/track/habits') }}>
-        <Row wrap>{todaysHabits.map((h) => <Chip key={h.id} label={h.name} icon={habitLogs.some((l) => l.habit_id === h.id) ? 'checkmark' : undefined}
+        <Row wrap>{cap('habits', todaysHabits).map((h) => <Chip key={h.id} label={h.name} icon={habitLogs.some((l) => l.habit_id === h.id) ? 'checkmark' : undefined}
           selected={habitLogs.some((l) => l.habit_id === h.id)} onPress={() => void toggleHabit(h.id)} />)}</Row>
       </Section>
     ) : null,
@@ -191,9 +212,9 @@ export default function Today() {
         <Card tone="alt">
           <Txt size={13} muted>A snapshot, not a score.</Txt>
           <Row wrap gap={14}>
-            <Txt>✓ {tasks.filter((x) => x.status === 'done').length} tasks</Txt>
-            <Txt>◷ {events.filter((e) => e.done).length} activities</Txt>
-            <Txt>♡ {habitLogs.length} habits</Txt>
+            <Txt>✓ {plural(tasks.filter((x) => x.status === 'done').length, 'task')}</Txt>
+            <Txt>◷ {plural(events.filter((e) => e.done).length, 'activity', 'activities')}</Txt>
+            <Txt>♡ {plural(habitLogs.length, 'habit')}</Txt>
             <Txt>⏱ {focus.reduce((s, f) => s + f.minutes, 0)} min focus</Txt>
           </Row>
         </Card>
@@ -239,27 +260,35 @@ export default function Today() {
       <TaskSheet visible={taskSheet.open} task={taskSheet.task} defaults={{ due_date: today }} onClose={() => setTaskSheet({ open: false })} />
       <EventSheet visible={eventSheet.open} event={eventSheet.event} onClose={() => setEventSheet({ open: false })} />
       <RescheduleSheet task={missed} onClose={() => setMissed(null)} />
-      <CustomizeSheet visible={customize} onClose={() => setCustomize(false)} layout={prefs.dashboard_layout} onSave={(l) => setPrefs({ dashboard_layout: l })} />
+      <CustomizeSheet visible={customize} onClose={() => setCustomize(false)} layout={prefs.dashboard_layout} sizes={prefs.dashboard_sizes ?? {}}
+        onSave={(l, sz) => setPrefs({ dashboard_layout: l, dashboard_sizes: sz })} />
       <MinimumDaySheet visible={minEdit} onClose={() => setMinEdit(false)} existing={minDay} date={today} />
     </Screen>
   );
 }
 
-function CustomizeSheet({ visible, onClose, layout, onSave }: { visible: boolean; onClose: () => void; layout: DashboardSection[]; onSave: (l: DashboardSection[]) => void }) {
+const SIZED: DashboardSection[] = ['timeline', 'tasks', 'meds', 'payments', 'habits'];
+function CustomizeSheet({ visible, onClose, layout, sizes, onSave }: {
+  visible: boolean; onClose: () => void; layout: DashboardSection[]; sizes: Partial<Record<DashboardSection, WidgetSize>>;
+  onSave: (l: DashboardSection[], s: Partial<Record<DashboardSection, WidgetSize>>) => void;
+}) {
   const [l, setL] = useState(layout);
-  React.useEffect(() => { if (visible) setL(layout); }, [visible, layout]);
+  const [sz, setSz] = useState(sizes);
+  React.useEffect(() => { if (visible) { setL(layout); setSz(sizes); } }, [visible, layout, sizes]);
   const move = (i: number, d: -1 | 1) => { const n = [...l]; const j = i + d; if (j < 0 || j >= n.length) return; [n[i], n[j]] = [n[j], n[i]]; setL(n); };
   return (
     <Sheet visible={visible} onClose={onClose} title="Customize Today">
-      <Txt muted size={13}>Reorder or hide sections. Hidden ones are listed below.</Txt>
+      <Txt muted size={13}>Reorder, resize or hide sections. Hidden ones are listed below.</Txt>
       {l.map((s, i) => (
         <Card key={s}><Row><Txt style={{ flex: 1 }}>{SECTION_LABEL[s]}</Txt>
           <IconButton icon="arrow-up" label="Move up" onPress={() => move(i, -1)} />
           <IconButton icon="arrow-down" label="Move down" onPress={() => move(i, 1)} />
-          <IconButton icon="eye-off-outline" label="Hide" onPress={() => setL(l.filter((x) => x !== s))} /></Row></Card>
+          <IconButton icon="eye-off-outline" label="Hide" onPress={() => setL(l.filter((x) => x !== s))} /></Row>
+          {SIZED.includes(s) ? <Row wrap>{(['compact', 'regular', 'large'] as const).map((k) =>
+            <Chip key={k} label={k} selected={(sz[s] ?? 'regular') === k} onPress={() => setSz({ ...sz, [s]: k })} />)}</Row> : null}</Card>
       ))}
       <Row wrap>{ALL_SECTIONS.filter((s) => !l.includes(s)).map((s) => <Chip key={s} icon="add" label={SECTION_LABEL[s]} onPress={() => setL([...l, s])} />)}</Row>
-      <Button label="Save layout" onPress={() => { onSave(l); onClose(); }} />
+      <Button label="Save layout" onPress={() => { onSave(l, sz); onClose(); }} />
     </Sheet>
   );
 }

@@ -4,7 +4,7 @@ import React from 'react';
 import { View } from 'react-native';
 import { Collection } from '@/components/Collection';
 import { useRows } from '@/lib/db';
-import { syncMedicationReminders } from '@/lib/notifications';
+import { cancelFor, syncMedicationReminders } from '@/lib/notifications';
 import { Preferences, usePreferences } from '@/lib/preferences';
 import { WEEKDAY_SHORT } from '@/lib/dates';
 import { Button, Card, Txt } from '@/components/ui';
@@ -49,6 +49,7 @@ export default function Meds() {
         ]}
         defaults={{ times: [], weekdays: [0, 1, 2, 3, 4, 5, 6], reminders: true }}
         afterSave={(m) => syncReminders(m, prefs)}
+        afterDelete={(m) => cancelFor(m.id)}
         itemTitle={(m) => m.name}
         itemSub={(m) => [m.dosage, m.times.map((t) => t.slice(0, 5)).join(', '), m.weekdays.length < 7 && m.weekdays.map((d) => WEEKDAY_SHORT[d]).join(' ')].filter(Boolean).join(' · ')}
         itemExtra={(m) => <MedHistory m={m} />}

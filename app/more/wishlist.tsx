@@ -8,8 +8,9 @@ import { formatMoney } from '@/lib/finance';
 import { usePreferences } from '@/lib/preferences';
 import { ymd } from '@/lib/dates';
 import { Button, Chip, Field, Pill, Row, Txt } from '@/components/ui';
+import { Thumb } from '@/components/ImageField';
 
-interface Item { id: string; name: string; description: string | null; url: string | null; price: number | null; currency: string | null; store: string | null; priority: string; status: string; category_id: string | null; notes: string | null; created_at: string }
+interface Item { id: string; name: string; description: string | null; url: string | null; price: number | null; currency: string | null; store: string | null; priority: string; status: string; category_id: string | null; notes: string | null; created_at: string; image_path: string | null }
 const STATUS = [['want', 'Want to buy'], ['saving', 'Saving for'], ['purchased', 'Purchased'], ['not_interested', 'No longer interested']];
 
 function Categories({ active, onPick }: { active: string | null; onPick: (id: string | null) => void }) {
@@ -58,6 +59,7 @@ export default function Wishlist() {
           { key: 'status', label: 'Status', type: 'select', options: STATUS.map(([value, label]) => ({ value, label })) },
           { key: 'description', label: 'Description', type: 'multiline' },
           { key: 'notes', label: 'Notes', type: 'multiline' },
+          { key: 'image_path', label: 'Photo', type: 'image', prefix: 'wishlist' },
         ]}
         defaults={{ priority: 'medium', status: 'want', currency: profile?.currency ?? 'USD', category_id: filter }}
         itemTitle={(i) => i.name}
@@ -65,6 +67,7 @@ export default function Wishlist() {
         itemRight={(i) => <View style={{ alignItems: 'flex-end', gap: 4 }}>{i.price != null ? <Txt weight="600">{formatMoney(Number(i.price), i.currency ?? 'USD')}</Txt> : null}
           <Pill label={STATUS.find(([v]) => v === i.status)?.[1] ?? i.status} tone={i.status === 'purchased' ? 'success' : i.status === 'saving' ? 'primary' : 'neutral'} /></View>}
         itemExtra={(i) => <Row wrap>
+          <Thumb path={i.image_path} />
           {i.url ? <Button small kind="ghost" label="Open link" onPress={() => Linking.openURL(i.url!)} /> : null}
           {i.status !== 'purchased' ? <Button small kind="secondary" label="Bought it" onPress={() => markPurchased(i)} /> : null}
         </Row>}

@@ -1,0 +1,4 @@
+# Deno code (URL imports) — checked with `deno check` in the Supabase toolchain, not Node ESLint
+supabase/functions/
+.test-build/
+node_modules/

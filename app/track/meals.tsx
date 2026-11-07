@@ -1,7 +1,7 @@
 import { Stack } from 'expo-router';
 import { addDays, addWeeks, format, startOfWeek } from 'date-fns';
 import React, { useState } from 'react';
-import { Alert, View } from 'react-native';
+import { Alert } from 'react-native';
 import { db, useRows } from '@/lib/db';
 import { ymd } from '@/lib/dates';
 import { usePreferences } from '@/lib/preferences';

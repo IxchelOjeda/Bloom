@@ -1,6 +1,7 @@
 /** Personal data export: every row the user owns, as one JSON file, shared via the OS sheet. */
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import { Platform } from 'react-native';
 import { supabase } from './supabase';
 
 export const USER_TABLES = [
@@ -26,7 +27,15 @@ export async function exportMyData(userId: string): Promise<void> {
     }
     out[t] = rows;
   }
-  const path = `${FileSystem.cacheDirectory}orchid-export-${new Date().toISOString().slice(0, 10)}.json`;
-  await FileSystem.writeAsStringAsync(path, JSON.stringify({ exported_at: new Date().toISOString(), data: out }, null, 2));
+  const json = JSON.stringify({ exported_at: new Date().toISOString(), data: out }, null, 2);
+  const name = `orchid-export-${new Date().toISOString().slice(0, 10)}.json`;
+  if (Platform.OS === 'web') {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+    a.download = name; a.click(); URL.revokeObjectURL(a.href);
+    return;
+  }
+  const path = `${FileSystem.cacheDirectory}${name}`;
+  await FileSystem.writeAsStringAsync(path, json);
   if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(path, { mimeType: 'application/json', dialogTitle: 'Your Orchid data' });
 }

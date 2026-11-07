@@ -40,6 +40,7 @@ export default function Recurring() {
         ]}
         defaults={{ frequency: 'monthly', currency: profile?.currency ?? 'USD', reminder_days: 1, active: true }}
         afterSave={remind}
+        afterDelete={(b) => cancelFor(b.id)}
         itemTitle={(b) => b.name}
         itemSub={(b) => `${b.frequency} · next ${b.next_due}`}
         itemRight={(b) => <Row gap={6}>{b.next_due < today ? <Pill label="overdue" tone="warning" /> : null}{!b.active ? <Pill label="paused" /> : null}</Row>}

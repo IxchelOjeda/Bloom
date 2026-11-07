@@ -3,6 +3,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { callFunction, supabase } from './supabase';
+import { cancelAll } from './notifications';
 import { setDbUser } from './db';
 
 interface AuthCtx {
@@ -39,6 +40,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return error?.message ?? null;
     },
     async signOut() {
+      // reminders on this phone belong to the person signing out (e.g. medication) — stop them
+      await cancelAll().catch(() => {});
       await supabase.auth.signOut();
       // cached rows are per-user keyed, but clear them so a shared phone leaks nothing
       const keys = (await AsyncStorage.getAllKeys()).filter((k) => k.startsWith('orchid.cache.'));

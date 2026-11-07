@@ -12,7 +12,8 @@ import { cors, json, rateLimited, userClient } from '../_shared/ai.ts';
 const Body = z.object({ query: z.string().min(2).max(80), country: z.string().length(2).nullish(), barcode: z.string().regex(/^\d{8,14}$/).nullish() });
 
 interface Food { source: 'usda' | 'open_food_facts' | 'restaurant_official'; external_id: string; brand: string | null; country: string | null; name: string;
-  serving_label: string; serving_grams: number | null; kcal: number; protein_g: number | null; carbs_g: number | null; fat_g: number | null; verified: true }
+  serving_label: string; serving_grams: number | null; kcal: number; protein_g: number | null; carbs_g: number | null; fat_g: number | null; verified: true;
+  portion_label: string | null; portion_grams: number | null }
 
 const num = (v: unknown) => (typeof v === 'number' && isFinite(v) ? Math.round(v * 10) / 10 : null);
 
@@ -29,9 +30,13 @@ async function usda(q: string): Promise<Food[]> {
     const n = (id: number) => num(f.foodNutrients?.find((x: any) => x.nutrientId === id)?.value);
     const kcal = n(1008) ?? n(2047) ?? n(2048);
     if (kcal == null) return null;
-    // USDA nutrient values are per 100 g (branded items also report a serving size)
+    // USDA nutrient values are per 100 g. Branded items also report the label's household serving
+    // (e.g. "4 pieces", 64 g) — kept as a verified portion so people can log by pieces.
+    const grams = typeof f.servingSize === 'number' && /^(g|grm)$/i.test(f.servingSizeUnit ?? '') ? f.servingSize : null;
+    const household = typeof f.householdServingFullText === 'string' ? f.householdServingFullText.trim().slice(0, 80) : null;
     return { source: 'usda', external_id: String(f.fdcId), brand: f.brandOwner ?? f.brandName ?? null, country: 'US',
-      name: f.description, serving_label: '100 g', serving_grams: 100, kcal, protein_g: n(1003), carbs_g: n(1005), fat_g: n(1004), verified: true };
+      name: f.description, serving_label: '100 g', serving_grams: 100, kcal, protein_g: n(1003), carbs_g: n(1005), fat_g: n(1004), verified: true,
+      portion_label: grams ? (household || `${grams} g`) : null, portion_grams: grams };
   }).filter(Boolean) as Food[];
 }
 
@@ -48,8 +53,10 @@ async function off(q: string, country?: string | null, barcode?: string | null):
     const nm = p.nutriments ?? {};
     const kcal = num(nm['energy-kcal_100g']);
     if (kcal == null || !p.product_name) return null;
+    const sq = Number(p.serving_quantity);
     return { source: 'open_food_facts', external_id: String(p.code), brand: p.brands ?? null, country: country ?? null, name: p.product_name,
-      serving_label: '100 g', serving_grams: 100, kcal, protein_g: num(nm.proteins_100g), carbs_g: num(nm.carbohydrates_100g), fat_g: num(nm.fat_100g), verified: true };
+      serving_label: '100 g', serving_grams: 100, kcal, protein_g: num(nm.proteins_100g), carbs_g: num(nm.carbohydrates_100g), fat_g: num(nm.fat_100g), verified: true,
+      portion_label: sq > 0 ? String(p.serving_size ?? `${sq} g`).slice(0, 80) : null, portion_grams: sq > 0 ? sq : null };
   }).filter(Boolean) as Food[];
 }
 

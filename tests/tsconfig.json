@@ -9,5 +9,5 @@
     "rootDir": "..",
     "types": ["node"]
   },
-  "files": ["scheduler.test.ts", "finance.test.ts", "offline-themes.test.ts"]
+  "include": ["*.test.ts"]
 }

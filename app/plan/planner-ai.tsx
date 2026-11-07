@@ -5,6 +5,7 @@ import { format } from 'date-fns';
 import { db } from '@/lib/db';
 import { usePreferences } from '@/lib/preferences';
 import { callFunction } from '@/lib/supabase';
+import { useDeviceEvents } from '@/lib/useDeviceEvents';
 import { ChatTurn, PlannerResponse, ProposalItem } from '@/lib/plannerTypes';
 import { useTheme } from '@/theme/ThemeProvider';
 import { Button, Card, Check, Chip, Field, Pill, Row, Screen, Title, Toggle, Txt } from '@/components/ui';
@@ -31,6 +32,8 @@ export default function PlannerAI() {
   const [selected, setSelected] = useState<boolean[]>([]);
   const [applied, setApplied] = useState(false);
   const sentPreset = useRef(false);
+  const [horizon] = useState(() => ({ from: new Date(), to: new Date(Date.now() + 21 * 86400000) }));
+  const phoneBusy = useDeviceEvents(horizon.from, horizon.to);
 
   const send = async (text: string) => {
     if (!text.trim() || busy) return;
@@ -39,6 +42,7 @@ export default function PlannerAI() {
     try {
       const res = await callFunction<PlannerResponse>('life-planner', {
         messages: next.slice(-12), now: new Date().toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        external_busy: phoneBusy.filter((b) => !b.allDay).slice(0, 300).map((b) => ({ start: b.start.toISOString(), end: b.end.toISOString() })),
       });
       setTurns([...next, { role: 'assistant', content: res.reply }]);
       if (res.proposal?.items.length) {

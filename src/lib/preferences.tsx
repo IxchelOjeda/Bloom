@@ -19,7 +19,10 @@ export interface Preferences {
   nutrition_goals: { kcal?: number; protein_g?: number } | null;
   pomodoro: { focus: number; short: number; long: number; rounds: number };
   ai_planner_ok: boolean;
+  integrations: { device_calendar: boolean; device_calendar_ids?: string[] };
+  dashboard_sizes: Partial<Record<DashboardSection, WidgetSize>>;
 }
+export type WidgetSize = 'compact' | 'regular' | 'large';
 export interface Profile {
   id: string; display_name: string | null; country: string | null; language: string; currency: string;
   timezone: string; units: 'metric' | 'imperial'; week_start: number; date_format: string;
@@ -32,6 +35,7 @@ export const DEFAULT_PREFS: Preferences = {
   dashboard_layout: ['minimum_day', 'timeline', 'tasks', 'meals', 'water', 'meds', 'payments', 'habits', 'progress'],
   notifications: { enabled: false, quiet_start: '22:00', quiet_end: '07:00', water_every_min: 120, tasks: true, meds: true, payments: true, meals: false },
   water_goal_ml: 2000, nutrition_goals: null, pomodoro: { focus: 25, short: 5, long: 15, rounds: 4 }, ai_planner_ok: false,
+  integrations: { device_calendar: false }, dashboard_sizes: {},
 };
 
 interface Ctx {

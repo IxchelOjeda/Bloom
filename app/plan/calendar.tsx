@@ -1,8 +1,12 @@
-import { addDays, addMonths, addWeeks, eachDayOfInterval, endOfMonth, endOfWeek, endOfYear, format, isSameDay, isSameMonth, startOfMonth, startOfWeek, startOfYear } from 'date-fns';
+import { addMonths, addWeeks, eachDayOfInterval, endOfMonth, endOfWeek, endOfYear, format, isSameDay, isSameMonth, startOfMonth, startOfWeek, startOfYear } from 'date-fns';
 import { Stack, router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
-import { useRows } from '@/lib/db';
+import { db, useRows } from '@/lib/db';
+import { useDeviceEvents } from '@/lib/useDeviceEvents';
+import { haptic } from '@/lib/haptics';
+import { upsertDeviceEvent } from '@/lib/deviceCalendar';
+import { syncItemReminder } from '@/lib/notifications';
 import { hm, ymd } from '@/lib/dates';
 import { usePreferences } from '@/lib/preferences';
 import { useTheme } from '@/theme/ThemeProvider';
@@ -13,13 +17,15 @@ type Mode = 'week' | 'month' | 'year';
 
 export default function Calendar() {
   const t = useTheme();
-  const { profile } = usePreferences();
+  const { profile, prefs } = usePreferences();
   const ws = (profile?.week_start ?? 1) as 0 | 1;
   const [mode, setMode] = useState<Mode>('week');
   const [anchor, setAnchor] = useState(new Date());
   const [selected, setSelected] = useState(new Date());
   const [eventSheet, setEventSheet] = useState<{ open: boolean; event?: EventRow | null; date?: Date }>({ open: false });
   const [taskSheet, setTaskSheet] = useState<{ open: boolean; task?: Task | null }>({ open: false });
+  // "Pick up & drop": long-press an item, then tap the day to move it to (keeps the time of day)
+  const [moving, setMoving] = useState<{ kind: 'event'; item: EventRow } | { kind: 'task'; item: Task } | null>(null);
 
   const range = useMemo(() => {
     if (mode === 'week') return { from: startOfWeek(anchor, { weekStartsOn: ws }), to: endOfWeek(anchor, { weekStartsOn: ws }) };
@@ -37,28 +43,52 @@ export default function Calendar() {
   const goals = useRows<{ id: string; title: string; target_date: string | null; current_value: number; target_value: number | null; horizon: string }>('goals', `goals:year:${anchor.getFullYear()}`,
     (q) => q.select('*').in('horizon', ['annual', 'long', 'monthly'])).rows;
 
+  const phone = useDeviceEvents(range.from, range.to, events.map((e) => e.external_ref?.device?.eventId).filter(Boolean) as string[]);
+
+  const dropOn = async (d: Date) => {
+    if (!moving) return;
+    if (moving.kind === 'event') {
+      const s0 = new Date(moving.item.starts_at); const len = +new Date(moving.item.ends_at) - +s0;
+      const s1 = new Date(d); s1.setHours(s0.getHours(), s0.getMinutes(), 0, 0);
+      const patch: Record<string, unknown> = { starts_at: s1.toISOString(), ends_at: new Date(+s1 + len).toISOString() };
+      if (moving.item.external_ref?.device) patch.external_ref = await upsertDeviceEvent({ ...moving.item, ...(patch as { starts_at: string; ends_at: string }) }).catch(() => moving.item.external_ref);
+      await db.update('events', moving.item.id, patch);
+      syncItemReminder(prefs, 'event', moving.item.id, moving.item.title, s1, moving.item.reminder_min).catch(() => {});
+    } else {
+      await db.update('tasks', moving.item.id, { due_date: ymd(d), status: 'todo' });
+    }
+    haptic.success(); setMoving(null);
+  };
+
   const shift = (d: number) => setAnchor((a) => mode === 'week' ? addWeeks(a, d) : mode === 'month' ? addMonths(a, d) : new Date(a.getFullYear() + d, 0, 1));
   const forDay = (d: Date) => ({
     events: events.filter((e) => isSameDay(new Date(e.starts_at), d)),
     tasks: tasks.filter((x) => x.due_date === ymd(d)),
     meals: meals.filter((m) => m.date === ymd(d)),
     flag: flags.find((f) => f.date === ymd(d)),
+    phone: phone.filter((p) => isSameDay(p.start, d) || (p.allDay && p.start <= d && p.end > d)),
   });
 
   const DayList = ({ d }: { d: Date }) => {
     const x = forDay(d);
     return (
-      <Card style={{ backgroundColor: x.flag ? t.colors.calRest : t.colors.surface }}>
+      <Card style={{ backgroundColor: x.flag ? t.colors.calRest : t.colors.surface, borderColor: moving ? t.colors.primary : t.colors.border, borderStyle: moving ? 'dashed' : 'solid' }}
+        onPress={moving ? () => void dropOn(d) : undefined}>
         <Row><Txt weight="600" style={{ flex: 1 }}>{format(d, 'EEEE d MMM')}</Txt>{x.flag ? <Pill label={x.flag.kind.replace('_', ' ')} tone="success" /> : null}
-          <IconButton icon="add" label="Add to this day" onPress={() => { const s = new Date(d); s.setHours(9, 0, 0, 0); setEventSheet({ open: true, date: s }); }} /></Row>
+          {moving ? <Pill label="drop here" tone="primary" /> : <IconButton icon="add" label="Add to this day" onPress={() => { const s = new Date(d); s.setHours(9, 0, 0, 0); setEventSheet({ open: true, date: s }); }} />}</Row>
         {x.events.map((e) => (
-          <Pressable key={e.id} onPress={() => setEventSheet({ open: true, event: e })}>
-            <Txt><Txt muted size={13}>{e.all_day ? 'All day' : hm(e.starts_at)}  </Txt>{e.title}{e.done ? ' ✓' : ''}</Txt>
+          <Pressable key={e.id} onPress={() => moving ? void dropOn(d) : setEventSheet({ open: true, event: e })}
+            onLongPress={() => { haptic.light(); setMoving({ kind: 'event', item: e }); }} delayLongPress={350}
+            accessibilityHint="Long-press to move to another day">
+            <Txt style={{ opacity: moving?.item.id === e.id ? 0.4 : 1 }}><Txt muted size={13}>{e.all_day ? 'All day' : hm(e.starts_at)}  </Txt>{e.title}{e.done ? ' ✓' : ''}</Txt>
           </Pressable>
         ))}
-        {x.tasks.map((k) => <Pressable key={k.id} onPress={() => setTaskSheet({ open: true, task: k })}><Txt>○ {k.title} <Txt size={12} muted>task</Txt></Txt></Pressable>)}
+        {x.tasks.map((k) => <Pressable key={k.id} onPress={() => moving ? void dropOn(d) : setTaskSheet({ open: true, task: k })}
+          onLongPress={() => { haptic.light(); setMoving({ kind: 'task', item: k }); }} delayLongPress={350} accessibilityHint="Long-press to move to another day">
+          <Txt style={{ opacity: moving?.item.id === k.id ? 0.4 : 1 }}>○ {k.title} <Txt size={12} muted>task</Txt></Txt></Pressable>)}
         {x.meals.map((m) => <Txt key={m.id} muted size={13}>🍽 {m.slot}: {m.title}</Txt>)}
-        {!x.events.length && !x.tasks.length && !x.meals.length ? <Txt muted size={13}>Free</Txt> : null}
+        {x.phone.map((p) => <Txt key={p.id} muted size={13}>📱 {p.allDay ? 'All day' : format(p.start, 'p')}  {p.title}</Txt>)}
+        {!x.events.length && !x.tasks.length && !x.meals.length && !x.phone.length ? <Txt muted size={13}>Free</Txt> : null}
       </Card>
     );
   };
@@ -75,6 +105,10 @@ export default function Calendar() {
         <IconButton icon="chevron-forward" label="Next" onPress={() => shift(1)} />
       </Row>
       <Chip label="Today" onPress={() => { setAnchor(new Date()); setSelected(new Date()); }} />
+      {moving ? (
+        <Card tone="soft"><Row><Txt style={{ flex: 1 }}>Moving “{moving.kind === 'event' ? moving.item.title : moving.item.title}” — tap the day it should go to.</Txt>
+          <Button small kind="ghost" label="Cancel" onPress={() => setMoving(null)} /></Row></Card>
+      ) : mode !== 'year' ? <Txt size={12} muted>Tip: long-press an event or task to move it to another day.</Txt> : null}
 
       {mode === 'week' && eachDayOfInterval({ start: range.from, end: range.to }).map((d) => <DayList key={ymd(d)} d={d} />)}
 
@@ -84,7 +118,7 @@ export default function Calendar() {
             const x = forDay(d); const isToday = isSameDay(d, new Date()); const sel = isSameDay(d, selected);
             const count = x.events.length + x.tasks.length;
             return (
-              <Pressable key={ymd(d)} onPress={() => setSelected(d)} accessibilityLabel={`${format(d, 'MMMM d')}, ${count} items`}
+              <Pressable key={ymd(d)} onPress={() => moving ? void dropOn(d) : setSelected(d)} accessibilityLabel={`${format(d, 'MMMM d')}, ${count} items`}
                 style={{ width: `${100 / 7}%`, aspectRatio: 0.9, padding: 2 }}>
                 <View style={{ flex: 1, borderRadius: t.radius.sm, alignItems: 'center', paddingTop: 4, gap: 3,
                   backgroundColor: isToday ? t.colors.calToday : x.flag ? t.colors.calRest : sel ? t.colors.primarySoft : 'transparent',

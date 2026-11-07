@@ -21,6 +21,7 @@ async function shot(name) { await page.waitForTimeout(500); await page.screensho
 const text = (s, opts) => page.getByText(s, { exact: true, ...opts });
 async function tap(s) { await text(s).locator('visible=true').first().click(); await page.waitForTimeout(350); }
 async function tapRole(name) { await page.getByRole('button', { name, exact: true }).locator('visible=true').first().click(); await page.waitForTimeout(350); }
+async function tapRoleLast(name) { await page.getByRole('button', { name, exact: true }).locator('visible=true').last().click(); await page.waitForTimeout(350); }
 async function fill(label, value) { await page.getByLabel(label, { exact: true }).locator('visible=true').last().fill(value); }
 async function expectText(s) { await page.getByText(s).locator('visible=true').first().waitFor({ timeout: 8000 }); }
 async function go(path) { await page.goto(APP + path); await page.waitForTimeout(1200); }
@@ -128,15 +129,154 @@ step('brain dump → convert to task and note', async () => {
 });
 
 step('money: account, expense, debt payment, savings, bill', async () => {
+  const u = await uid();
+  const today = new Date(); const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   await go('/money/accounts');
   await tapRole('Add');
   await fill('Name', 'Checking');
   await fill('Current balance', '1000');
   await tapRole('Save');
   await expectText('Checking');
-  await shot('accounts');
+
   await go('/money/expenses');
-  await shot('expenses');
+  await tapRole('Add');
+  await fill('Amount (USD)', '45.50');
+  await fill('What for', 'Groceries');
+  await tap('Food');
+  await fill('Date', ymd(today));
+  await tapRoleLast('Checking');
+  await tap('debit');
+  await tapRole('Save');
+  await expectText('Groceries');
+  await page.waitForTimeout(1200);
+  check(Number((await one(`select balance from accounts where user_id=$1 and name='Checking'`, [u])).balance) === 954.5, 'expense reduced account balance to 954.50');
+
+  await go('/money/debts');
+  await tapRole('Add');
+  await fill('Name', 'Visa');
+  await tap('Credit card');
+  await fill('Original amount', '1000');
+  await fill('Remaining balance', '800');
+  await fill('Interest rate % per year (if any)', '20');
+  await fill('Minimum payment', '50');
+  await tapRole('Save');
+  await expectText('Visa');
+  await tapRole('Log payment');
+  await page.waitForTimeout(1500);
+  check(Number((await one(`select remaining from debts where user_id=$1 and name='Visa'`, [u])).remaining) === 750, 'debt payment reduced remaining to 750');
+  await shot('debts');
+
+  await go('/money/savings');
+  await tapRole('Add');
+  await fill('Goal', 'Trip to Oaxaca');
+  await fill('Target amount', '500');
+  await fill('Target date', ymd(new Date(today.getTime() + 100 * 86400000)));
+  await tapRole('Save');
+  await expectText('Trip to Oaxaca');
+  await fill('Add money', '100');
+  await tapRoleLast('Checking');
+  await tapRoleLast('Add');
+  await page.waitForTimeout(1500);
+  check(Number((await one(`select current_amount from savings_goals where user_id=$1`, [u])).current_amount) === 100, 'contribution updated savings goal');
+  check(Number((await one(`select balance from accounts where user_id=$1 and name='Checking'`, [u])).balance) === 854.5, 'contribution moved money out of the account');
+  await shot('savings');
+
+  await go('/money/recurring');
+  await tapRole('Add');
+  await fill('Name', 'Spotify');
+  await fill('Amount', '11.99');
+  await tap('Monthly');
+  await fill('Next due date', ymd(today));
+  await tapRole('Save');
+  await expectText('Spotify');
+  await tapRole('Mark paid · $11.99');
+  await page.waitForTimeout(1500);
+  const next = (await one(`select next_due::text d from recurring_payments where user_id=$1`, [u])).d;
+  check(next > ymd(today), `paying the bill advanced next due (${next})`);
+
+  await go('/money');
+  await page.waitForTimeout(1500);
+  await shot('money-dashboard');
+  const body = await page.innerText('body');
+  check(body.includes('750'), 'money dashboard shows debt total');
+});
+
+step('track: manual food, water screen, medication, habit', async () => {
+  const u = await uid();
+  await go('/track/food');
+  await tapRole('Enter manually');
+  await fill('Food', 'Chicken rice bowl');
+  await fill('Calories (kcal)', '620');
+  await fill('Protein g', '38');
+  await tapRole('lunch');
+  await tapRole('Log it');
+  await expectText('Chicken rice bowl');
+  await expectText('estimate');
+  await shot('food');
+  const f = await one(`select kcal::float k, source::text s from food_logs where user_id=$1`, [u]);
+  check(f && f.k === 620 && f.s === 'manual_estimate', 'manual food logged as an estimate');
+  // saved custom food is searchable even without the Edge Function
+  await fill("e.g. McDonald's nuggets, oat milk, banana", 'chicken');
+  await tapRole('Search');
+  await page.waitForTimeout(1500);
+  await expectText('your estimate');
+  await shot('food-search-own');
+
+  await go('/track/meds');
+  await tapRole('Add');
+  await fill('Name', 'Vitamin D');
+  await fill('Dosage (as prescribed)', '1 tablet');
+  await fill('Times (HH:MM, comma separated)', '23:30');
+  await tapRole('Save');
+  await expectText('Vitamin D');
+  await go('/');
+  await expectText('Snooze 10 min');
+  await tapRole('Taken');
+  await page.waitForTimeout(1200);
+  check((await one(`select status::text s from medication_logs where user_id=$1`, [u]))?.s === 'taken', 'medication marked taken from Today');
+
+  await go('/track/habits');
+  await tapRole('Add');
+  await fill('Habit', 'Read 10 pages');
+  await tapRole('Save');
+  await expectText('Read 10 pages');
+  await go('/');
+  await tapRole('Read 10 pages');
+  await page.waitForTimeout(1200);
+  check((await one(`select count(*)::int c from habit_logs where user_id=$1`, [u])).c === 1, 'habit checked from Today');
+  await shot('today-track');
+});
+
+step('theme engine restyles the whole app and persists', async () => {
+  const u = await uid();
+  await go('/more/theme');
+  await shot('theme-picker');
+  await page.getByRole('radio', { name: 'Gothic', exact: true }).locator('visible=true').first().click();
+  await page.waitForTimeout(1200);
+  check((await one(`select theme_id from preferences where user_id=$1`, [u])).theme_id === 'gothic', 'theme saved to profile');
+  await go('/');
+  await shot('today-gothic');
+  await go('/more/theme');
+  await page.getByRole('radio', { name: 'Cybercore', exact: true }).locator('visible=true').first().click();
+  await page.waitForTimeout(800);
+  await go('/money');
+  await shot('money-cybercore');
+  await go('/more/theme');
+  await page.getByRole('radio', { name: 'Pinterest Minimalist', exact: true }).locator('visible=true').first().click();
+  await page.waitForTimeout(800);
+});
+
+step('log out, log back in: data persisted', async () => {
+  await go('/more/settings');
+  await tapRole('Log out');
+  await expectText('Welcome back');
+  await fill('Email', email);
+  await fill('Password', 'correct-horse-1');
+  await tapRole('Log in');
+  await page.waitForTimeout(2500);
+  await expectText('Dentist');
+  await expectText('Snooze 10 min');
+  check(true, 'data visible after re-login');
 });
 
 step('visit every screen', async () => {
@@ -150,6 +290,15 @@ step('visit every screen', async () => {
   check(true, 'visited all screens');
 });
 
+step('delete account removes everything', async () => {
+  const u = await uid();
+  await go('/more/settings');
+  await tapRole('Delete my account');
+  await expectText('Welcome back');
+  const left = await one(`select (select count(*) from auth.users where id=$1)::int u, (select count(*) from tasks where user_id=$1)::int t, (select count(*) from transactions where user_id=$1)::int x`, [u]);
+  check(left.u === 0 && left.t === 0 && left.x === 0, 'account and all rows deleted');
+});
+
 (async () => {
   const filter = process.argv[2];
   sql = new Client({ database: process.env.PGDATABASE ?? 'orchid_e2e' }); await sql.connect();
@@ -157,7 +306,7 @@ step('visit every screen', async () => {
   page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   page.on('pageerror', (e) => problems.push(`PAGEERROR: ${e.message}`));
   page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) problems.push(`CONSOLE: ${m.text().slice(0, 300)}`); });
-  page.on('response', (r) => { if (r.status() >= 400 && r.url().includes(':54321')) problems.push(`HTTP ${r.status()} ${r.request().method()} ${decodeURIComponent(r.url()).slice(22, 200)}`); });
+  page.on('response', (r) => { if (r.status() >= 400 && r.url().includes(':54321') && !(r.status() === 503 && r.url().includes('/functions/v1/'))) problems.push(`HTTP ${r.status()} ${r.request().method()} ${decodeURIComponent(r.url()).slice(22, 200)}`); });
   page.on('dialog', (d) => { console.log(`  dialog: ${d.message().slice(0, 120)}`); void d.accept(); });
   for (const s of steps) {
     if (filter && !s.name.includes(filter) && s.name !== 'signup + onboarding') continue;

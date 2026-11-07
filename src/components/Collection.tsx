@@ -9,6 +9,8 @@ import { addDays } from 'date-fns';
 import { db, useRows } from '@/lib/db';
 import { ymd, WEEKDAY_SHORT } from '@/lib/dates';
 import { Button, Card, Chip, Empty, Field, IconName, Row, Screen, Sheet, Title, Toggle, Txt } from './ui';
+import { DateTimeField } from './pickers';
+import { ImageField } from './ImageField';
 
 export type FieldDef =
   | { key: string; label: string; type: 'text' | 'multiline' | 'url'; required?: boolean; placeholder?: string }
@@ -17,7 +19,8 @@ export type FieldDef =
   | { key: string; label: string; type: 'select'; options: { value: string; label: string }[]; required?: boolean }
   | { key: string; label: string; type: 'bool'; hint?: string }
   | { key: string; label: string; type: 'weekdays' }
-  | { key: string; label: string; type: 'times' }; // list of HH:mm
+  | { key: string; label: string; type: 'times' } // list of HH:mm
+  | { key: string; label: string; type: 'image'; prefix: 'receipt' | 'wishlist' }; // private photo path
 
 export interface CollectionProps<T extends { id: string }> {
   table: string;
@@ -37,10 +40,11 @@ export interface CollectionProps<T extends { id: string }> {
   header?: React.ReactNode;
   transform?: (values: Record<string, unknown>, existing?: T) => Record<string, unknown>;
   afterSave?: (row: T) => void | Promise<void>; // e.g. (re)schedule reminders
+  afterDelete?: (row: T) => void | Promise<void>; // e.g. cancel reminders
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 
 export function validate(fields: FieldDef[], v: Record<string, any>): string | null {
   for (const f of fields) {
@@ -86,7 +90,7 @@ export function FormFields({ fields, values, set }: { fields: FieldDef[]; values
           case 'date':
             return (
               <View key={f.key} style={{ gap: 6 }}>
-                <Field label={f.label} value={v ?? ''} onChangeText={(x) => set(f.key, x)} placeholder="YYYY-MM-DD" autoCapitalize="none" />
+                <DateTimeField mode="date" label={f.label} value={v ?? ''} onChange={(x) => set(f.key, x)} allowClear />
                 <Row wrap>
                   <Chip label="Today" onPress={() => set(f.key, ymd(new Date()))} />
                   <Chip label="Tomorrow" onPress={() => set(f.key, ymd(addDays(new Date(), 1)))} />
@@ -95,6 +99,10 @@ export function FormFields({ fields, values, set }: { fields: FieldDef[]; values
                 </Row>
               </View>
             );
+          case 'time':
+            return <DateTimeField key={f.key} mode="time" label={f.label} value={v ? String(v).slice(0, 5) : ''} onChange={(x) => set(f.key, x)} allowClear />;
+          case 'image':
+            return <ImageField key={f.key} label={f.label} value={v ?? null} prefix={f.prefix} onChange={(x) => set(f.key, x)} />;
           case 'times':
             return <Field key={f.key} label={f.label} value={(v ?? []).join(', ')} placeholder="08:00, 20:00"
               onChangeText={(x) => set(f.key, x.split(',').map((s) => s.trim()).filter(Boolean))} />;
@@ -102,9 +110,9 @@ export function FormFields({ fields, values, set }: { fields: FieldDef[]; values
             return (
               <Field key={f.key} label={f.label} value={v == null ? '' : String(v)}
                 onChangeText={(x) => set(f.key, x)} multiline={f.type === 'multiline'}
-                placeholder={'placeholder' in f ? f.placeholder : f.type === 'time' ? 'HH:MM' : undefined}
+                placeholder={'placeholder' in f ? f.placeholder : undefined}
                 keyboardType={f.type === 'number' || f.type === 'money' ? 'decimal-pad' : f.type === 'url' ? 'url' : 'default'}
-                autoCapitalize={f.type === 'url' || f.type === 'time' ? 'none' : 'sentences'} />
+                autoCapitalize={f.type === 'url' ? 'none' : 'sentences'} />
             );
         }
       })}
@@ -124,7 +132,7 @@ export function coerce(fields: FieldDef[], v: Record<string, any>) {
   return out;
 }
 
-export function useFormSheet<T extends { id: string }>(table: string, fields: FieldDef[], defaults: Record<string, unknown> = {}, transform?: CollectionProps<T>['transform'], afterSave?: CollectionProps<T>['afterSave']) {
+export function useFormSheet<T extends { id: string }>(table: string, fields: FieldDef[], defaults: Record<string, unknown> = {}, transform?: CollectionProps<T>['transform'], afterSave?: CollectionProps<T>['afterSave'], afterDelete?: CollectionProps<T>['afterDelete']) {
   const [editing, setEditing] = useState<T | null>(null);
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<Record<string, any>>({});
@@ -152,7 +160,7 @@ export function useFormSheet<T extends { id: string }>(table: string, fields: Fi
   const remove = (row: T, label: string) =>
     Alert.alert('Delete?', `"${label}" will be removed.`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => void db.remove(table, row.id) },
+      { text: 'Delete', style: 'destructive', onPress: () => { void db.remove(table, row.id); Promise.resolve(afterDelete?.(row)).catch(() => {}); } },
     ]);
   const set = (k: string, v: unknown) => setValues((s) => ({ ...s, [k]: v }));
   return { open, setOpen, start, save, remove, values, set, busy, editing };
@@ -163,7 +171,7 @@ export function Collection<T extends { id: string }>(p: CollectionProps<T>) {
   const { rows, loading } = useRows<T>(p.table, `${p.table}:${JSON.stringify(where)}`, (q) =>
     q.select('*').match(where).order(p.order?.column ?? 'created_at', { ascending: p.order?.ascending ?? false }),
     (r) => Object.entries(where).every(([k, v]) => (r as Record<string, unknown>)[k] === v));
-  const form = useFormSheet<T>(p.table, p.fields, p.defaults, p.transform, p.afterSave);
+  const form = useFormSheet<T>(p.table, p.fields, p.defaults, p.transform, p.afterSave, p.afterDelete);
   const sorted = useMemo(() => (p.sort ? [...rows].sort(p.sort) : rows), [rows, p.sort]);
 
   return (

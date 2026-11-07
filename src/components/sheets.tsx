@@ -4,22 +4,29 @@
  */
 import { addDays, format } from 'date-fns';
 import React, { useEffect, useState } from 'react';
-import { Alert, View } from 'react-native';
+import { Alert, Linking, Platform, View } from 'react-native';
 import { db, useRows } from '@/lib/db';
 import { ymd } from '@/lib/dates';
 import { nextFreeSlot, AvailabilityRule, DayKind } from '@/lib/scheduler';
 import { supabase } from '@/lib/supabase';
-import { Button, Chip, Field, Row, Sheet, Txt } from './ui';
+import { Button, Chip, Field, Row, Sheet, Toggle, Txt } from './ui';
+import { DateTimeField } from './pickers';
+import { usePreferences } from '@/lib/preferences';
+import { syncItemReminder, cancelFor } from '@/lib/notifications';
+import { pickDocument, pickImage, removeFile, signedUrl, StoredFile } from '@/lib/storage';
+import { deviceCalendarSupported, ExternalRef, removeDeviceEvent, upsertDeviceEvent } from '@/lib/deviceCalendar';
 
 export interface Task {
   id: string; title: string; description: string | null; notes: string | null; parent_id: string | null;
   activity_id: string | null; goal_id: string | null; goal_increment: number; due_date: string | null; scheduled_at: string | null;
   deadline: string | null; priority: 'low' | 'medium' | 'high' | 'urgent'; estimate_min: number | null;
   status: 'todo' | 'done' | 'not_relevant' | 'unscheduled'; recurrence: string | null; completed_at: string | null; created_at: string;
+  reminder_at: string | null; attachments: StoredFile[];
 }
 export interface EventRow {
   id: string; title: string; kind: string; starts_at: string; ends_at: string; all_day: boolean; notes: string | null;
   task_id: string | null; activity_id: string | null; done: boolean; location: string | null;
+  reminder_min: number | null; external_ref: ExternalRef | null;
 }
 export interface Named { id: string; name?: string; title?: string }
 
@@ -39,10 +46,18 @@ export function TaskSheet({ visible, onClose, task, defaults }: {
   const [newSub, setNewSub] = useState('');
   const [newCat, setNewCat] = useState('');
   const [busy, setBusy] = useState(false);
+  const [remind, setRemind] = useState<'none' | 'morning' | 'day_before' | 'custom'>('none');
+  const [remindDate, setRemindDate] = useState(''); const [remindTime, setRemindTime] = useState('09:00');
+  const [deadlineDay, setDeadlineDay] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const { prefs } = usePreferences();
 
   useEffect(() => {
     if (!visible) return;
     setV(task ? { ...task } : { priority: 'medium', ...defaults });
+    setDeadlineDay(task?.deadline ? ymd(new Date(task.deadline)) : '');
+    if (task?.reminder_at) { const r = new Date(task.reminder_at); setRemind('custom'); setRemindDate(ymd(r)); setRemindTime(format(r, 'HH:mm')); }
+    else { setRemind('none'); setRemindDate(''); setRemindTime('09:00'); }
     if (task) supabase.from('task_categories').select('category_id').eq('task_id', task.id).then(({ data }) => setCatIds((data ?? []).map((d) => d.category_id)));
     else setCatIds([]);
   }, [visible, task]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -53,12 +68,22 @@ export function TaskSheet({ visible, onClose, task, defaults }: {
     const title = (v.title ?? '').trim();
     if (!title) return Alert.alert('Give it a name', 'A short title is enough.');
     if (v.due_date && !/^\d{4}-\d{2}-\d{2}$/.test(v.due_date)) return Alert.alert('Date format', 'Use YYYY-MM-DD');
+    if (deadlineDay && !/^\d{4}-\d{2}-\d{2}$/.test(deadlineDay)) return Alert.alert('Deadline format', 'Use YYYY-MM-DD');
+    const anchor = v.due_date || deadlineDay;
+    if ((remind === 'morning' || remind === 'day_before') && !anchor) return Alert.alert('Pick a due date first', 'Or choose a custom reminder time.');
+    if (remind === 'custom' && (!/^\d{4}-\d{2}-\d{2}$/.test(remindDate) || !/^\d{2}:\d{2}/.test(remindTime))) return Alert.alert('Reminder', 'Pick a date and time for the reminder.');
+    const reminderAt = remind === 'none' ? null
+      : remind === 'custom' ? new Date(`${remindDate}T${remindTime.slice(0, 5)}:00`)
+      : new Date(`${anchor}T09:00:00`);
+    if (reminderAt && remind === 'day_before') reminderAt.setDate(reminderAt.getDate() - 1);
     setBusy(true);
     const row = {
       title, description: v.description || null, notes: v.notes || null, priority: v.priority ?? 'medium',
       due_date: v.due_date || null, estimate_min: v.estimate_min ? Number(v.estimate_min) : null,
       goal_id: v.goal_id || null, activity_id: v.activity_id || null, goal_increment: v.goal_id ? Number(v.goal_increment ?? 0) : 0,
       recurrence: v.recurrence || null, parent_id: v.parent_id ?? null, scheduled_at: v.scheduled_at ?? null,
+      deadline: deadlineDay ? new Date(`${deadlineDay}T23:59:00`).toISOString() : null,
+      reminder_at: reminderAt ? reminderAt.toISOString() : null, attachments: v.attachments ?? [],
     };
     let id = task?.id;
     if (task) await db.update('tasks', task.id, row);
@@ -67,6 +92,8 @@ export function TaskSheet({ visible, onClose, task, defaults }: {
     const { data: existing } = task ? await supabase.from('task_categories').select('id,category_id').eq('task_id', id!) : { data: [] as { id: string; category_id: string }[] };
     for (const e of existing ?? []) if (!catIds.includes(e.category_id)) await db.remove('task_categories', e.id);
     for (const c of catIds) if (!(existing ?? []).some((e) => e.category_id === c)) await db.insert('task_categories', { task_id: id, category_id: c });
+    // reminders never block saving
+    syncItemReminder(prefs, 'task', id!, title, row.reminder_at, row.reminder_at ? 0 : null).catch(() => {});
     setBusy(false); onClose();
   };
 
@@ -85,7 +112,16 @@ export function TaskSheet({ visible, onClose, task, defaults }: {
           <Chip label="Tomorrow" selected={v.due_date === ymd(addDays(new Date(), 1))} onPress={() => set('due_date', ymd(addDays(new Date(), 1)))} />
           <Chip label="Someday" selected={!v.due_date} onPress={() => set('due_date', null)} />
         </Row>
-        <Field value={v.due_date ?? ''} onChangeText={(x) => set('due_date', x)} placeholder="or YYYY-MM-DD" autoCapitalize="none" />
+        <DateTimeField mode="date" value={v.due_date ?? ''} onChange={(x) => set('due_date', x || null)} placeholder="or pick a date" allowClear />
+      </View>
+      <DateTimeField mode="date" label="Hard deadline (optional)" value={deadlineDay} onChange={setDeadlineDay} placeholder="No deadline" allowClear />
+      <View style={{ gap: 6 }}>
+        <Txt size={13} muted>Remind me</Txt>
+        <Row wrap>{([['none', 'No reminder'], ['morning', 'Morning of (9:00)'], ['day_before', 'Day before'], ['custom', 'Pick a time']] as const).map(([k, l]) =>
+          <Chip key={k} label={l} selected={remind === k} onPress={() => { setRemind(k); if (k === 'custom' && !remindDate) setRemindDate(v.due_date || ymd(new Date())); }} />)}</Row>
+        {remind === 'custom' ? <Row><View style={{ flex: 1 }}><DateTimeField mode="date" value={remindDate} onChange={setRemindDate} /></View>
+          <View style={{ flex: 1 }}><DateTimeField mode="time" value={remindTime} onChange={setRemindTime} /></View></Row> : null}
+        {remind !== 'none' && !prefs.notifications.enabled ? <Txt size={12} muted>Reminders are off — turn them on in More → Settings.</Txt> : null}
       </View>
       <View style={{ gap: 6 }}>
         <Txt size={13} muted>Priority</Txt>
@@ -114,6 +150,28 @@ export function TaskSheet({ visible, onClose, task, defaults }: {
           <Chip key={l} label={l} selected={(v.recurrence ?? '') === r} onPress={() => set('recurrence', r || null)} />)}</Row>
       </View>
       <Field label="Notes" multiline value={v.notes ?? ''} onChangeText={(x) => set('notes', x)} />
+      <View style={{ gap: 6 }}>
+        <Txt size={13} muted>Attachments</Txt>
+        {(v.attachments ?? []).map((a) => (
+          <Row key={a.path}>
+            <Chip icon={a.mime.startsWith('image/') ? 'image-outline' : 'document-outline'} label={a.name.length > 28 ? a.name.slice(0, 26) + '…' : a.name}
+              onPress={async () => { const u = await signedUrl(a.path); if (u) void Linking.openURL(u); }} />
+            <Button small kind="ghost" label="Remove" onPress={() => { set('attachments', (v.attachments ?? []).filter((x) => x.path !== a.path)); void removeFile(a.path); }} />
+          </Row>
+        ))}
+        {Platform.OS !== 'web' ? <Row wrap>
+          <Button small kind="secondary" icon="image-outline" label="Photo" loading={uploading} onPress={async () => {
+            setUploading(true);
+            try { const f = await pickImage('attachment'); if (f) set('attachments', [...(v.attachments ?? []), f]); } catch (e) { Alert.alert('Could not attach', e instanceof Error ? e.message : String(e)); }
+            finally { setUploading(false); }
+          }} />
+          <Button small kind="secondary" icon="document-attach-outline" label="File" loading={uploading} onPress={async () => {
+            setUploading(true);
+            try { const f = await pickDocument('attachment'); if (f) set('attachments', [...(v.attachments ?? []), f]); } catch (e) { Alert.alert('Could not attach', e instanceof Error ? e.message : String(e)); }
+            finally { setUploading(false); }
+          }} />
+        </Row> : <Txt size={12} muted>Attach photos and files from the phone app.</Txt>}
+      </View>
       {task ? (
         <View style={{ gap: 6 }}>
           <Txt size={13} muted>Subtasks — small steps make big things doable</Txt>
@@ -128,7 +186,7 @@ export function TaskSheet({ visible, onClose, task, defaults }: {
         </View>
       ) : null}
       <Button label="Save" onPress={save} loading={busy} />
-      {task ? <Button kind="ghost" label="Delete task" onPress={() => Alert.alert('Delete task?', task.title, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => { void db.remove('tasks', task.id); onClose(); } }])} /> : null}
+      {task ? <Button kind="ghost" label="Delete task" onPress={() => Alert.alert('Delete task?', task.title, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => { void db.remove('tasks', task.id); void cancelFor(task.id); onClose(); } }])} /> : null}
     </Sheet>
   );
 }
@@ -141,6 +199,9 @@ export function EventSheet({ visible, onClose, event, date, defaultTitle, onSave
   const [day, setDay] = useState(''); const [start, setStart] = useState(''); const [end, setEnd] = useState('');
   const [notes, setNotes] = useState(''); const [activity, setActivity] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [reminder, setReminder] = useState<number | null>(null);
+  const [toPhone, setToPhone] = useState(false);
+  const { prefs } = usePreferences();
 
   useEffect(() => {
     if (!visible) return;
@@ -149,7 +210,8 @@ export function EventSheet({ visible, onClose, event, date, defaultTitle, onSave
     const e = event ? new Date(event.ends_at) : new Date(+s + 60 * 60000);
     setTitle(event?.title ?? defaultTitle ?? ''); setKind(event?.kind ?? 'event'); setNotes(event?.notes ?? ''); setActivity(event?.activity_id ?? null);
     setDay(ymd(s)); setStart(format(s, 'HH:mm')); setEnd(format(e, 'HH:mm'));
-  }, [visible, event, date]);
+    setReminder(event?.reminder_min ?? null); setToPhone(!!event?.external_ref?.device);
+  }, [visible, event, date]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async () => {
     const re = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -158,9 +220,15 @@ export function EventSheet({ visible, onClose, event, date, defaultTitle, onSave
     const s = new Date(`${day}T${start}:00`), e = new Date(`${day}T${end}:00`);
     if (e <= s) return Alert.alert('End must be after start');
     setBusy(true);
-    const row = { title: title.trim(), kind, starts_at: s.toISOString(), ends_at: e.toISOString(), notes: notes || null, activity_id: activity };
+    const row: Record<string, unknown> = { title: title.trim(), kind, starts_at: s.toISOString(), ends_at: e.toISOString(), notes: notes || null, activity_id: activity, reminder_min: reminder };
+    // Optional copy in the phone's calendar (Apple Calendar / Google Calendar via the OS)
+    try {
+      if (toPhone) row.external_ref = await upsertDeviceEvent({ ...(row as { title: string; starts_at: string; ends_at: string }), external_ref: event?.external_ref ?? null });
+      else if (event?.external_ref?.device) { await removeDeviceEvent(event.external_ref); row.external_ref = { ...event.external_ref, device: undefined }; }
+    } catch (err) { Alert.alert('Saved in Orchid only', err instanceof Error ? err.message : String(err)); }
     let id = event?.id;
     if (event) await db.update('events', event.id, row); else id = (await db.insert('events', { ...row, done: false })).id;
+    syncItemReminder(prefs, 'event', id!, title.trim(), s, reminder).catch(() => {});
     setBusy(false); onSaved?.(id!); onClose();
   };
   const durations = [15, 30, 45, 60, 90, 120];
@@ -173,15 +241,21 @@ export function EventSheet({ visible, onClose, event, date, defaultTitle, onSave
     <Sheet visible={visible} onClose={onClose} title={event ? 'Edit' : 'Add to schedule'}>
       <Field label="What" value={title} onChangeText={setTitle} autoFocus={!event} />
       <Row wrap>{KINDS.map(([k, l]) => <Chip key={k} label={l} selected={kind === k} onPress={() => setKind(k)} />)}</Row>
-      <Field label="Date" value={day} onChangeText={setDay} autoCapitalize="none" />
-      <Row><View style={{ flex: 1 }}><Field label="Start" value={start} onChangeText={setStart} autoCapitalize="none" /></View>
-        <View style={{ flex: 1 }}><Field label="End" value={end} onChangeText={setEnd} autoCapitalize="none" /></View></Row>
+      <DateTimeField mode="date" label="Date" value={day} onChange={setDay} />
+      <Row><View style={{ flex: 1 }}><DateTimeField mode="time" label="Start" value={start} onChange={setStart} /></View>
+        <View style={{ flex: 1 }}><DateTimeField mode="time" label="End" value={end} onChange={setEnd} /></View></Row>
       <Row wrap>{durations.map((m) => <Chip key={m} label={m < 60 ? `${m}m` : `${m / 60}h`} onPress={() => setDuration(m)} />)}</Row>
       {acts.length ? <Row wrap><Chip label="No activity" selected={!activity} onPress={() => setActivity(null)} />
         {acts.map((a) => <Chip key={a.id} label={a.name!} selected={activity === a.id} onPress={() => setActivity(a.id)} />)}</Row> : null}
+      <View style={{ gap: 6 }}>
+        <Txt size={13} muted>Heads-up before it starts</Txt>
+        <Row wrap>{([[null, 'None'], [0, 'At start'], [10, '10 min'], [30, '30 min'], [60, '1 hour'], [1440, '1 day']] as const).map(([m, l]) =>
+          <Chip key={l} label={l} selected={reminder === m} onPress={() => setReminder(m)} />)}</Row>
+      </View>
+      {deviceCalendarSupported ? <Toggle label="Also add to my phone calendar" hint="Apple Calendar / Google Calendar — kept in sync when you edit it here" value={toPhone} onChange={setToPhone} /> : null}
       <Field label="Notes" multiline value={notes} onChangeText={setNotes} />
       <Button label="Save" onPress={save} loading={busy} />
-      {event ? <Button kind="ghost" label="Delete" onPress={() => { void db.remove('events', event.id); onClose(); }} /> : null}
+      {event ? <Button kind="ghost" label="Delete" onPress={() => { void db.remove('events', event.id); void cancelFor(event.id); void removeDeviceEvent(event.external_ref); onClose(); }} /> : null}
     </Sheet>
   );
 }

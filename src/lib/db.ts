@@ -55,10 +55,23 @@ function throwIf(res: { error: { message: string; code?: string } | null }) {
   throw new Error(res.error.message);
 }
 
-export async function initSync() {
-  queue = await load(kv);
+let queueKey = 'orchid.queue';
+let netSub: (() => void) | null = null;
+
+/** Loads this user's queue (queues are per user, so one person's offline edits never replay under another account). */
+export async function initSync(userId: string) {
+  queueKey = `orchid.queue.${userId}`;
+  queue = await load(kv, queueKey);
+  // migrate a queue written by older versions under the shared key, only if its rows belong to this user
+  const legacy = await load(kv);
+  if (legacy.pending.length && legacy.pending.every((o) => o.kind !== 'insert' || o.row.user_id === userId)) {
+    queue = { ...queue, pending: [...legacy.pending, ...queue.pending] };
+    await AsyncStorage.removeItem('orchid.queue');
+  }
   setStatus();
-  NetInfo.addEventListener((s) => {
+  netSub?.();
+  setStatus();
+  netSub = NetInfo.addEventListener((s) => {
     const was = online; online = !!s.isConnected && s.isInternetReachable !== false; setStatus();
     if (online && !was) void syncNow();
   });
@@ -72,13 +85,13 @@ export async function syncNow() {
   try {
     await flushLive(() => queue, async (next) => {
       queue.pending.forEach((o) => touched.add(o.table));
-      queue = next; await save(kv, queue); setStatus();
+      queue = next; await save(kv, queue, queueKey); setStatus();
     }, transport);
   } finally { syncing = false; setStatus(); }
   touched.forEach(emitChange);
 }
 
-export function dismissFailed() { queue = { ...queue, failed: [] }; void save(kv, queue); setStatus(); }
+export function dismissFailed() { queue = { ...queue, failed: [] }; void save(kv, queue, queueKey); setStatus(); }
 
 export const newId = () => Crypto.randomUUID();
 let currentUser: string | null = null;
@@ -86,7 +99,7 @@ export const setDbUser = (id: string | null) => { currentUser = id; };
 
 async function push(op: Op) {
   queue = enqueue(queue, op);
-  await save(kv, queue);
+  await save(kv, queue, queueKey);
   setStatus();
   emitChange(op.table);
   void syncNow();

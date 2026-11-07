@@ -5,8 +5,10 @@ import { fontFamily, useTheme } from '@/theme/ThemeProvider';
 
 export default function TabsLayout() {
   const t = useTheme();
-  const icon = (name: React.ComponentProps<typeof Ionicons>['name']) =>
-    ({ color, size }: { color: string; size: number }) => <Ionicons name={name} color={color} size={size} />;
+  const icon = (name: React.ComponentProps<typeof Ionicons>['name']) => {
+    const TabIcon = ({ color, size }: { color: string; size: number }) => <Ionicons name={name} color={color} size={size} />;
+    return TabIcon;
+  };
 
   return (
     <Tabs screenOptions={{

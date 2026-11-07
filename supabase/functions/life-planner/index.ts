@@ -11,6 +11,8 @@ const Body = z.object({
   messages: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(4000) })).min(1).max(20),
   now: z.string().datetime(),
   timezone: z.string().max(64),
+  // Busy blocks from the phone's own calendar (opt-in). Times only — no titles are sent.
+  external_busy: z.array(z.object({ start: z.string().datetime(), end: z.string().datetime() })).max(300).optional(),
 });
 
 const Item = z.object({
@@ -135,6 +137,7 @@ Deno.serve(async (req) => {
     now_local: fmt(nowWall), weekday_now: nowWall.getUTCDay(), timezone: tz,
     availability: av.data ?? [], day_flags: flags.data ?? [], recent_energy: energy.data ?? [],
     events: (ev.data ?? []).map((e) => ({ ...e, starts_at: fmt(wall(e.starts_at)), ends_at: fmt(wall(e.ends_at)) })),
+    phone_calendar_busy: (parsed.data.external_busy ?? []).map((b) => ({ starts_at: fmt(wall(b.start)), ends_at: fmt(wall(b.end)) })),
     open_tasks: tasks.data ?? [], activities: acts.data ?? [], goals: goals.data ?? [],
   });
 
@@ -151,7 +154,10 @@ Deno.serve(async (req) => {
   const rules: AvailabilityRule[] = (av.data ?? []).map((r) => ({ weekday: r.weekday, start: r.start_time.slice(0, 5), end: r.end_time.slice(0, 5) }));
   const dayFlags = Object.fromEntries((flags.data ?? []).map((f) => [f.date, f.kind as DayKind]));
   const energyMap = Object.fromEntries((energy.data ?? []).map((e) => [e.date, e.level as Energy]));
-  const busyAll = (ev.data ?? []).filter((e) => !e.done).map((e) => ({ id: e.id, title: e.title, start: wall(e.starts_at), end: wall(e.ends_at) }));
+  const busyAll = [
+    ...(ev.data ?? []).filter((e) => !e.done).map((e) => ({ id: e.id, title: e.title, start: wall(e.starts_at), end: wall(e.ends_at) })),
+    ...(parsed.data.external_busy ?? []).map((b, i) => ({ id: `phone-${i}`, title: 'Phone calendar (busy)', start: wall(b.start), end: wall(b.end) })),
+  ];
   const busy = busyAll;
   const items: (z.infer<typeof Item> & { issues?: string[] })[] = [];
   const warnings: string[] = [];

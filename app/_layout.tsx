@@ -9,7 +9,10 @@ import { initSync } from '@/lib/db';
 import { PreferencesProvider, usePreferences } from '@/lib/preferences';
 import { isConfigured } from '@/lib/supabase';
 import { ThemeProvider, useTheme } from '@/theme/ThemeProvider';
+import { installWebAlert } from '@/lib/webAlert';
 import { Screen, Title, Txt } from '@/components/ui';
+
+installWebAlert();
 
 function Gate() {
   const { session, ready } = useAuth();
@@ -18,7 +21,7 @@ function Gate() {
   const router = useRouter();
   const t = useTheme();
 
-  useEffect(() => { if (session) void initSync(); }, [session]);
+  useEffect(() => { if (session) void initSync(session.user.id); }, [session?.user.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!ready || (session && !loaded)) return;

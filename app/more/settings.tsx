@@ -1,13 +1,16 @@
 import { Stack, router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { Alert } from 'react-native';
+import { Alert, View } from 'react-native';
 import { useAuth } from '@/lib/auth';
+import { useSyncStatus } from '@/lib/db';
 import { exportMyData } from '@/lib/exportData';
 import { ensurePermission, rescheduleHydration } from '@/lib/notifications';
 import { ModuleKey, usePreferences } from '@/lib/preferences';
 import { useTheme } from '@/theme/ThemeProvider';
 import { WEEKDAY_SHORT } from '@/lib/dates';
 import { Button, Card, Chip, Field, Row, Screen, Section, Toggle, Txt } from '@/components/ui';
+import { DateTimeField } from '@/components/pickers';
+import { deviceCalendarSupported, ensureCalendarPermission, listCalendars } from '@/lib/deviceCalendar';
 
 const MODULES: { key: ModuleKey; label: string }[] = [
   { key: 'plan', label: 'Planner' }, { key: 'habits', label: 'Habits' }, { key: 'food', label: 'Food & meals' }, { key: 'water', label: 'Water' },
@@ -18,10 +21,14 @@ export default function Settings() {
   const t = useTheme();
   const { session, signOut, deleteAccount } = useAuth();
   const { prefs, profile, setPrefs, setProfile } = usePreferences();
+  const sync = useSyncStatus();
   const [p, setP] = useState({ display_name: '', country: '', language: 'en', currency: 'USD', timezone: 'UTC', date_format: 'yyyy-MM-dd' });
   const [busy, setBusy] = useState<string | null>(null);
   const [kcal, setKcal] = useState(prefs.nutrition_goals?.kcal ? String(prefs.nutrition_goals.kcal) : '');
   const [quiet, setQuiet] = useState({ start: prefs.notifications.quiet_start, end: prefs.notifications.quiet_end });
+  const [cals, setCals] = useState<{ id: string; title: string; source: string }[]>([]);
+  const integ = prefs.integrations ?? { device_calendar: false };
+  useEffect(() => { if (integ.device_calendar) void listCalendars().then(setCals); }, [integ.device_calendar]);
 
   useEffect(() => {
     if (profile) setP({ display_name: profile.display_name ?? '', country: profile.country ?? '', language: profile.language, currency: profile.currency, timezone: profile.timezone, date_format: profile.date_format });
@@ -76,10 +83,31 @@ export default function Settings() {
             <Toggle label="Payments" value={n.payments} onChange={(v) => setN({ payments: v })} />
             <Toggle label="Meals" value={n.meals} onChange={(v) => setN({ meals: v })} />
             <Txt size={13} muted>Quiet hours — reminders wait until they end (except medication)</Txt>
-            <Row><Field value={quiet.start} onChangeText={(v) => setQuiet({ ...quiet, start: v })} style={{ minWidth: 90 }} /><Txt>to</Txt>
-              <Field value={quiet.end} onChangeText={(v) => setQuiet({ ...quiet, end: v })} style={{ minWidth: 90 }} />
-              <Button small kind="secondary" label="Save" onPress={() => { const re = /^([01]\d|2[0-3]):[0-5]\d$/; if (re.test(quiet.start) && re.test(quiet.end)) void setN({ quiet_start: quiet.start, quiet_end: quiet.end }); }} /></Row>
+            <Row><View style={{ flex: 1 }}><DateTimeField mode="time" label="From" value={quiet.start} onChange={(v) => setQuiet({ ...quiet, start: v })} /></View>
+              <View style={{ flex: 1 }}><DateTimeField mode="time" label="Until" value={quiet.end} onChange={(v) => setQuiet({ ...quiet, end: v })} /></View></Row>
+            <Button small kind="secondary" label="Save quiet hours" onPress={() => { const re = /^([01]\d|2[0-3]):[0-5]\d$/; if (re.test(quiet.start) && re.test(quiet.end)) void setN({ quiet_start: quiet.start, quiet_end: quiet.end }); else Alert.alert('Use HH:MM (24h)'); }} />
           </>) : null}
+        </Card>
+      </Section>
+
+      <Section title="Integrations">
+        <Card>
+          {deviceCalendarSupported ? (<>
+            <Toggle label="Show my phone calendar" hint="Apple Calendar / Google Calendar events appear (read-only) in Today and Calendar, and the planner won't double-book them. They stay on your phone."
+              value={integ.device_calendar} onChange={async (v) => {
+                if (v && !(await ensureCalendarPermission())) return Alert.alert('Calendar access is off', "Allow calendar access for Orchid in your phone's settings.");
+                await setPrefs({ integrations: { ...integ, device_calendar: v } });
+              }} />
+            {integ.device_calendar && cals.length ? (<>
+              <Txt size={13} muted>Which calendars? (none selected = all)</Txt>
+              <Row wrap>{cals.map((c) => {
+                const on = (integ.device_calendar_ids ?? []).includes(c.id);
+                return <Chip key={c.id} label={`${c.title}${c.source ? ` · ${c.source}` : ''}`} selected={on}
+                  onPress={() => setPrefs({ integrations: { ...integ, device_calendar_ids: on ? (integ.device_calendar_ids ?? []).filter((x) => x !== c.id) : [...(integ.device_calendar_ids ?? []), c.id] } })} />;
+              })}</Row>
+            </>) : null}
+            <Txt size={12} muted>To copy an Orchid event to your phone calendar, open it and turn on “Also add to my phone calendar”.</Txt>
+          </>) : <Txt size={13} muted>Phone calendar sync is available in the iOS and Android app.</Txt>}
         </Card>
       </Section>
 
@@ -106,7 +134,9 @@ export default function Settings() {
       <Section title="Account">
         <Card>
           <Txt size={13} muted>Signed in as {session?.user.email}</Txt>
-          <Button kind="secondary" label="Log out" onPress={signOut} />
+          <Button kind="secondary" label="Log out" onPress={() => sync.pending
+            ? Alert.alert('Some changes are still waiting to sync', `${sync.pending} change${sync.pending > 1 ? 's' : ''} will upload next time you log in on this phone.`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Log out anyway', onPress: () => void signOut() }])
+            : void signOut()} />
           <Button kind="danger" label="Delete my account" loading={busy === 'delete'} onPress={() => Alert.alert('Delete everything?', 'Your account and all your data will be permanently erased. Consider exporting first.', [
             { text: 'Cancel', style: 'cancel' },
             { text: 'Delete forever', style: 'destructive', onPress: async () => { setBusy('delete'); const e = await deleteAccount(); setBusy(null); if (e) Alert.alert('Could not delete', e); } },

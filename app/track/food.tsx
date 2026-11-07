@@ -5,12 +5,14 @@ import { Alert, View } from 'react-native';
 import { db, useRows } from '@/lib/db';
 import { dayRange } from '@/lib/dates';
 import { usePreferences } from '@/lib/preferences';
-import { callFunction } from '@/lib/supabase';
+import { callFunction, supabase } from '@/lib/supabase';
+import { Amount, amountModes, parsePortion, scaleFood } from '@/lib/nutrition';
+import { BarcodeScanner } from '@/components/BarcodeScanner';
 import { useTheme } from '@/theme/ThemeProvider';
 import { Button, Card, Chip, Empty, Field, Pill, Progress, Row, Screen, Section, Segmented, Sheet, Txt } from '@/components/ui';
 
 type Slot = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'drink';
-interface Food { id: string; source: string; brand: string | null; name: string; serving_label: string; serving_grams: number | null; kcal: number | null; protein_g: number | null; carbs_g: number | null; fat_g: number | null; verified: boolean }
+interface Food { id: string; source: string; brand: string | null; name: string; serving_label: string; serving_grams: number | null; portion_label?: string | null; portion_grams?: number | null; kcal: number | null; protein_g: number | null; carbs_g: number | null; fat_g: number | null; verified: boolean; user_id?: string | null }
 interface Log { id: string; eaten_at: string; slot: Slot; name: string; servings: number; kcal: number | null; protein_g: number | null; carbs_g: number | null; fat_g: number | null; source: string; favorite: boolean; food_id: string | null }
 
 const SLOTS: Slot[] = ['breakfast', 'lunch', 'dinner', 'snack', 'drink'];
@@ -41,16 +43,24 @@ export default function FoodDiary() {
   }), [week]);
   const maxDay = Math.max(1, ...byDay.map((d) => d.kcal));
 
-  const search = async () => {
-    if (q.trim().length < 2) return;
+  const [scan, setScan] = useState(false);
+
+  /** Your own saved foods (instant, works offline-ish) + verified databases via the Edge Function. */
+  const search = async (opts?: { barcode?: string }) => {
+    const query = opts?.barcode ?? q.trim();
+    if (query.length < 2) return;
     setSearching(true); setNote(null);
+    const mine = opts?.barcode ? { data: [] as Food[] } : await supabase.from('foods').select('*').not('user_id', 'is', null).ilike('name', `%${query.replace(/[%_]/g, '')}%`).limit(10);
+    const own = (mine.data ?? []) as Food[];
+    setResults(own);
     try {
-      const res = await callFunction<{ results: Food[]; sources: { usda: boolean } }>('food-search', { query: q.trim(), country: profile?.country?.slice(0, 2) ?? null });
-      setResults(res.results);
+      const res = await callFunction<{ results: Food[]; sources: { usda: boolean } }>('food-search', { query, barcode: opts?.barcode ?? null, country: profile?.country?.slice(0, 2) ?? null });
+      setResults([...own, ...res.results]);
       if (!res.sources.usda) setNote('Only Open Food Facts is connected. Add a free USDA key for generic foods and US restaurant items (see README).');
-      if (!res.results.length) setNote('No verified match. You can add it manually as an estimate.');
-    } catch (e) { setNote(e instanceof Error ? e.message : 'Search unavailable — you can still add food manually.'); }
-    finally { setSearching(false); }
+      if (!res.results.length && !own.length) setNote(opts?.barcode ? `No product found for barcode ${opts.barcode}. You can add it manually as an estimate.` : 'No verified match. You can add it manually as an estimate.');
+    } catch (e) {
+      setNote(`${own.length ? 'Showing your saved foods only. ' : ''}Verified search unavailable (${e instanceof Error ? e.message : 'offline'}) — you can still add food manually.`);
+    } finally { setSearching(false); }
   };
 
   const relog = (l: Log) => db.insert('food_logs', { slot: defaultSlot(), name: l.name, servings: l.servings, kcal: l.kcal, protein_g: l.protein_g, carbs_g: l.carbs_g, fat_g: l.fat_g, source: l.source, food_id: l.food_id, eaten_at: new Date().toISOString() });
@@ -92,13 +102,15 @@ export default function FoodDiary() {
       )}
 
       <Section title="Add food">
-        <Row><View style={{ flex: 1 }}><Field value={q} onChangeText={setQ} placeholder="e.g. McDonald's nuggets, oat milk, banana" returnKeyType="search" onSubmitEditing={search} /></View>
-          <Button small label="Search" onPress={search} loading={searching} /></Row>
+        <Row><View style={{ flex: 1 }}><Field value={q} onChangeText={setQ} placeholder="e.g. McDonald's nuggets, oat milk, banana" returnKeyType="search" onSubmitEditing={() => void search()} /></View>
+          <Button small label="Search" onPress={() => void search()} loading={searching} /></Row>
+        <Button small kind="secondary" icon="barcode-outline" label="Scan a barcode" onPress={() => setScan(true)} />
         {note ? <Txt size={13} muted>{note}</Txt> : null}
         {results.map((f) => (
           <Card key={f.id} onPress={() => setPicked(f)}>
             <Txt weight="600">{f.name}</Txt>
-            <Txt size={12} muted>{[f.brand, `${f.kcal} kcal / ${f.serving_label}`, f.source === 'usda' ? 'USDA' : f.source === 'open_food_facts' ? 'Open Food Facts' : 'official'].filter(Boolean).join(' · ')}</Txt>
+            <Txt size={12} muted>{[f.brand, `${f.kcal ?? '?'} kcal / ${f.serving_label}`, f.portion_label && `portion: ${f.portion_label}`].filter(Boolean).join(' · ')}</Txt>
+            <Row gap={6}>{f.verified ? <Pill tone="success" label={f.source === 'usda' ? 'USDA' : f.source === 'open_food_facts' ? 'Open Food Facts' : 'official data'} /> : <Pill label="your estimate" />}</Row>
           </Card>
         ))}
         <Button kind="ghost" label="Enter manually" onPress={() => setManual(true)} />
@@ -110,28 +122,42 @@ export default function FoodDiary() {
       {!logs.length && view === 'today' && !results.length ? <Empty icon="nutrition-outline" text="Nothing logged today. Logging is optional — do what helps." /> : null}
 
       <LogSheet food={picked} onClose={() => setPicked(null)} />
+      <BarcodeScanner visible={scan} onClose={() => setScan(false)} onScanned={(code) => { setScan(false); setQ(code); void search({ barcode: code }); }} />
       <ManualSheet visible={manual} onClose={() => setManual(false)} />
     </Screen>
   );
 }
 
 function LogSheet({ food, onClose }: { food: Food | null; onClose: () => void }) {
-  const [grams, setGrams] = useState('100');
+  const modes = food ? amountModes(food) : ['grams' as const];
+  const [mode, setMode] = useState<Amount['mode']>(modes[0]);
+  const [value, setValue] = useState('');
   const [slot, setSlot] = useState<Slot>(defaultSlot());
+  React.useEffect(() => {
+    if (!food) return;
+    const m = amountModes(food)[0]; setMode(m);
+    setValue(m === 'portion' ? String(parsePortion(food.portion_label)?.count ?? 1) : m === 'grams' ? '100' : '1');
+  }, [food]);
   if (!food) return null;
-  const factor = (Number(grams) || 0) / (food.serving_grams ?? 100);
-  const v = (n: number | null) => (n == null ? null : r1(n * factor));
+  const n = Number(value.replace(',', '.')) || 0;
+  const amount: Amount = mode === 'grams' ? { mode, grams: n } : { mode, count: n };
+  const r = scaleFood(food, amount);
+  const unit = parsePortion(food.portion_label)?.unit ?? 'portion';
+  const chips = mode === 'grams' ? [50, 100, 150, 200, 250] : mode === 'portion' ? [1, 2, 4, 6, 10, 20] : [0.5, 1, 1.5, 2];
   return (
     <Sheet visible onClose={onClose} title={food.name}>
-      <Txt muted size={13}>Per {food.serving_label}: {food.kcal} kcal · P {food.protein_g ?? '–'} · C {food.carbs_g ?? '–'} · F {food.fat_g ?? '–'}</Txt>
-      <Field label="Amount (grams)" value={grams} onChangeText={setGrams} keyboardType="decimal-pad" />
-      <Row wrap>{[50, 100, 150, 200, 250].map((g) => <Chip key={g} label={`${g} g`} selected={grams === String(g)} onPress={() => setGrams(String(g))} />)}</Row>
-      <Txt size={12} muted>Tip: check the product's serving weight (e.g. 10 nuggets ≈ the weight on the box) for accuracy.</Txt>
+      <Txt muted size={13}>Per {food.serving_label}: {food.kcal ?? '–'} kcal · P {food.protein_g ?? '–'} · C {food.carbs_g ?? '–'} · F {food.fat_g ?? '–'}</Txt>
+      {food.portion_label && food.portion_grams ? <Txt muted size={13}>Label portion: {food.portion_label} = {food.portion_grams} g</Txt> : null}
+      {modes.length > 1 ? <Segmented value={mode} onChange={(m) => { setMode(m); setValue(m === 'grams' ? String(r.grams ?? 100) : String(parsePortion(food.portion_label)?.count ?? 1)); }}
+        options={modes.map((m) => ({ value: m, label: m === 'grams' ? 'Grams' : m === 'portion' ? `By ${unit}` : 'Servings' }))} /> : null}
+      <Field label={mode === 'grams' ? 'Amount (grams)' : mode === 'portion' ? `How many ${unit}` : `Servings (${food.serving_label})`} value={value} onChangeText={setValue} keyboardType="decimal-pad" />
+      <Row wrap>{chips.map((c) => <Chip key={c} label={mode === 'grams' ? `${c} g` : `${c}`} selected={n === c} onPress={() => setValue(String(c))} />)}</Row>
       <Row wrap>{SLOTS.map((s) => <Chip key={s} label={s} selected={slot === s} onPress={() => setSlot(s)} />)}</Row>
-      <Card tone="soft"><Txt weight="600">{v(food.kcal)} kcal</Txt><Txt size={13}>P {v(food.protein_g) ?? '–'}g · C {v(food.carbs_g) ?? '–'}g · F {v(food.fat_g) ?? '–'}g</Txt></Card>
+      <Card tone="soft"><Txt weight="600">{r.kcal ?? '–'} kcal{r.grams != null && mode !== 'grams' ? `  ·  ${r.grams} g` : ''}</Txt><Txt size={13}>P {r.protein_g ?? '–'}g · C {r.carbs_g ?? '–'}g · F {r.fat_g ?? '–'}g</Txt>
+        <Txt size={11} muted>{food.verified ? 'Calculated from verified database values.' : 'Your own estimate.'}</Txt></Card>
       <Button label="Log it" onPress={async () => {
-        if (!(Number(grams) > 0)) return Alert.alert('Enter an amount');
-        await db.insert('food_logs', { food_id: food.id, name: food.brand ? `${food.name} (${food.brand})` : food.name, slot, servings: r1(factor), kcal: v(food.kcal), protein_g: v(food.protein_g), carbs_g: v(food.carbs_g), fat_g: v(food.fat_g),
+        if (!(n > 0)) return Alert.alert('Enter an amount');
+        await db.insert('food_logs', { food_id: food.id, name: food.brand ? `${food.name} (${food.brand})` : food.name, slot, servings: r.factor, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g,
           source: food.source, eaten_at: new Date().toISOString() });
         onClose();
       }} />

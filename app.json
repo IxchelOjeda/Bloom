@@ -14,8 +14,11 @@
     "android": {
       "package": "com.orchid.app",
       "permissions": [
+        "CAMERA",
         "POST_NOTIFICATIONS",
-        "SCHEDULE_EXACT_ALARM"
+        "READ_CALENDAR",
+        "SCHEDULE_EXACT_ALARM",
+        "WRITE_CALENDAR"
       ]
     },
     "plugins": [
@@ -28,7 +31,29 @@
           "color": "#C98B8B"
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "@react-native-community/datetimepicker",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Orchid uses the camera only to scan food barcodes when you choose to.",
+          "recordAudioAndroid": false,
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Orchid lets you attach photos of receipts, wishlist items and task files you pick.",
+          "cameraPermission": "Orchid lets you take a photo of a receipt or item when you choose to."
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Orchid adds events you choose to your phone's calendar, and can show your calendar events in your plan."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

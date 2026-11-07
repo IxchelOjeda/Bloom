@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { fontFamily, useTheme } from '@/theme/ThemeProvider';
 import { useSyncStatus, syncNow, dismissFailed } from '@/lib/db';
+import { Backdrop } from '@/theme/Backdrop';
 
 export type IconName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -25,6 +26,7 @@ export function Screen({ children, scroll = true, padded = true }: { children: R
   );
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: t.colors.bg }}>
+      <Backdrop theme={t} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         {scroll ? <ScrollView keyboardShouldPersistTaps="handled">{body}</ScrollView> : <View style={{ flex: 1 }}>{body}</View>}
       </KeyboardAvoidingView>

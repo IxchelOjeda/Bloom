@@ -41,7 +41,7 @@ export default function Money() {
     <Screen>
       <Title sub="A clear picture, no judgement. Nothing here moves real money.">Money</Title>
       <Row wrap>
-        <Stat label="Available" value={m(same(accounts).reduce((s, a) => s + Number(a.balance), 0))} sub={`${accounts.length} accounts`} />
+        <Stat label="Available" value={m(same(accounts).reduce((s, a) => s + Number(a.balance), 0))} sub={`${accounts.length} account${accounts.length === 1 ? '' : 's'}`} />
         <Stat label="Saved" value={m(same(savings).reduce((s, g) => s + Number(g.current_amount), 0))} />
       </Row>
       <Row wrap>

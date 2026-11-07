@@ -3,7 +3,7 @@ import * as Linking from 'expo-linking';
 import React from 'react';
 import { Collection } from '@/components/Collection';
 import { db } from '@/lib/db';
-import { Button, Chip, Row, Txt } from '@/components/ui';
+import { Button, Chip, Row } from '@/components/ui';
 
 interface Note { id: string; title: string | null; body: string | null; url: string | null; pinned: boolean; updated_at: string }
 
