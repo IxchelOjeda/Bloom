@@ -1,0 +1,7 @@
+node_modules/
+.expo/
+.test-build/
+.env
+dist/
+ios/
+android/

@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "../.test-build",
+    "rootDir": "..",
+    "types": ["node"]
+  },
+  "files": ["scheduler.test.ts", "finance.test.ts", "offline-themes.test.ts"]
+}
