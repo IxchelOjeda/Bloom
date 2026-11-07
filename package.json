@@ -14,7 +14,12 @@
     "functions:deploy": "npm run sync:shared && supabase functions deploy life-planner && supabase functions deploy recipe-ai && supabase functions deploy food-search && supabase functions deploy delete-account",
     "test:logic": "tsc -p tests/tsconfig.json && node --test .test-build/tests/*.test.js",
     "test:db": "./tests/db/run.sh",
-    "sync:shared": "cp src/lib/scheduler.ts supabase/functions/_shared/scheduler.ts"
+    "sync:shared": "cp src/lib/scheduler.ts supabase/functions/_shared/scheduler.ts",
+    "test:e2e:setup": "./tests/e2e/setup-db.sh",
+    "test:e2e:gateway": "node tests/e2e/gateway.mjs",
+    "test:e2e:web": "EXPO_PUBLIC_SUPABASE_URL=http://localhost:54321 EXPO_PUBLIC_SUPABASE_ANON_KEY=local-anon expo start --web --port 8081",
+    "test:e2e": "node tests/e2e/smoke.mjs && node tests/e2e/flow.cjs",
+    "test:all": "npm run typecheck && npm run lint && npm run test:logic && npm run test:db"
   },
   "dependencies": {
     "@expo/metro-runtime": "~4.0.1",

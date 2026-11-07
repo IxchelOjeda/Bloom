@@ -37,10 +37,13 @@ export function Screen({ children, scroll = true, padded = true }: { children: R
 function SyncBanner() {
   const t = useTheme();
   const s = useSyncStatus();
-  if (s.online && s.failed === 0) return null;
-  const msg = !s.online
-    ? `Offline — ${s.pending ? `${s.pending} change${s.pending > 1 ? 's' : ''} will sync when you're back` : 'showing saved data'}`
-    : `${s.failed} change${s.failed > 1 ? 's' : ''} couldn't be saved`;
+  if (s.online && !s.stalled && s.failed === 0) return null;
+  const n = (k: number) => `${k} change${k > 1 ? 's' : ''}`;
+  const msg = s.failed && s.online
+    ? `${n(s.failed)} couldn't be saved`
+    : !s.online
+      ? `Offline — ${s.pending ? `${n(s.pending)} will sync when you're back` : 'showing saved data'}`
+      : `Can't reach the server — ${n(s.pending)} saved on this phone, retrying · tap to retry now`;
   return (
     <Pressable onPress={() => (s.failed ? dismissFailed() : syncNow())}
       style={{ backgroundColor: t.colors.surfaceAlt, borderRadius: t.radius.sm, padding: 10, flexDirection: 'row', gap: 8, alignItems: 'center' }}>

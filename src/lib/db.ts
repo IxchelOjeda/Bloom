@@ -37,12 +37,17 @@ let queue: QueueState = EMPTY;
 let online = true;
 let syncing = false;
 const statusSubs = new Set<() => void>();
-let status = { online: true, pending: 0, failed: 0, syncing: false };
-const setStatus = () => { status = { online, pending: queue.pending.length, failed: queue.failed.length, syncing }; statusSubs.forEach((s) => s()); };
+// "stalled": the OS says we're online but the server can't be reached (flaky Wi-Fi, captive portal…)
+let stalled = false;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryDelay = 5000;
+let status = { online: true, pending: 0, failed: 0, syncing: false, stalled: false };
+const setStatus = () => { status = { online, pending: queue.pending.length, failed: queue.failed.length, syncing, stalled }; statusSubs.forEach((s) => s()); };
 export const useSyncStatus = () => useSyncExternalStore((cb) => { statusSubs.add(cb); return () => statusSubs.delete(cb); }, () => status);
 
 const kv = { get: AsyncStorage.getItem, set: AsyncStorage.setItem };
 
+let sawNetworkError = false;
 const transport = {
   async insert(table: string, row: Record<string, unknown>) { throwIf(await supabase.from(table).upsert(row, { onConflict: 'id' })); },
   async patch(table: string, id: string, patch: Record<string, unknown>) { throwIf(await supabase.from(table).update(patch).eq('id', id)); },
@@ -51,7 +56,7 @@ const transport = {
 function throwIf(res: { error: { message: string; code?: string } | null }) {
   if (!res.error) return;
   // fetch failures have no Postgres code → treat as offline and retry later
-  if (!res.error.code || /fetch|network/i.test(res.error.message)) throw new NetworkError(res.error.message);
+  if (!res.error.code || /fetch|network/i.test(res.error.message)) { sawNetworkError = true; throw new NetworkError(res.error.message); }
   throw new Error(res.error.message);
 }
 
@@ -73,21 +78,31 @@ export async function initSync(userId: string) {
   setStatus();
   netSub = NetInfo.addEventListener((s) => {
     const was = online; online = !!s.isConnected && s.isInternetReachable !== false; setStatus();
-    if (online && !was) void syncNow();
+    if (online && !was) { retryDelay = 5000; void syncNow(); }
   });
   void syncNow();
 }
 
 export async function syncNow() {
   if (syncing || !online || queue.pending.length === 0) return;
-  syncing = true; setStatus();
+  syncing = true; sawNetworkError = false; setStatus();
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
   const touched = new Set<string>();
   try {
     await flushLive(() => queue, async (next) => {
       queue.pending.forEach((o) => touched.add(o.table));
       queue = next; await save(kv, queue, queueKey); setStatus();
     }, transport);
-  } finally { syncing = false; setStatus(); }
+  } finally {
+    syncing = false;
+    stalled = sawNetworkError && queue.pending.length > 0;
+    if (stalled) {
+      // back off: 5 s, 10 s, 20 s … up to 2 min, so edits made on a flaky connection still go through
+      retryTimer = setTimeout(() => { retryTimer = null; void syncNow(); }, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 120000);
+    } else retryDelay = 5000;
+    setStatus();
+  }
   touched.forEach(emitChange);
 }
 

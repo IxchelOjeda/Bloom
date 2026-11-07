@@ -279,6 +279,38 @@ step('log out, log back in: data persisted', async () => {
   check(true, 'data visible after re-login');
 });
 
+step('offline: edits apply instantly, queue, then sync once on reconnect', async () => {
+  const u = await uid();
+  await go('/');
+  await page.waitForTimeout(1000);
+  const before = (await one('select coalesce(sum(amount_ml),0)::int s from water_logs where user_id=$1', [u])).s;
+  await page.context().setOffline(true);
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  await page.waitForTimeout(800);
+  await tapRole('+250');
+  await tapRole('Task');
+  await fill('Task', 'Offline task');
+  await tapRole('Save');
+  await page.waitForTimeout(800);
+  await expectText('Offline task');                 // shows immediately from the local queue
+  await expectText(/(Offline — |Can't reach the server — )[23] changes/);
+  await shot('offline');
+  const mid = (await one('select coalesce(sum(amount_ml),0)::int s from water_logs where user_id=$1', [u])).s;
+  check(mid === before, 'nothing reached the server while offline');
+  await page.context().setOffline(false);
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  for (let i = 0; i < 30; i++) {           // auto-retry (backoff) — no user action needed
+    await page.waitForTimeout(1000);
+    if ((await one(`select count(*)::int c from tasks where user_id=$1 and title='Offline task'`, [u])).c) break;
+  }
+  await page.waitForTimeout(1000);
+  const after = (await one('select coalesce(sum(amount_ml),0)::int s from water_logs where user_id=$1', [u])).s;
+  check(after === before + 250, `water synced exactly once (${before} → ${after})`);
+  check((await one(`select count(*)::int c from tasks where user_id=$1 and title='Offline task'`, [u])).c === 1, 'offline task synced exactly once');
+  await expectText('Offline task');
+  check(await page.getByText(/Can't reach the server|Offline —/).count() === 0, 'sync banner cleared after reconnect');
+});
+
 step('visit every screen', async () => {
   for (const r of ['/plan', '/track', '/money', '/more', '/plan/calendar', '/plan/activities', '/plan/availability', '/plan/brain-dump', '/plan/focus', '/plan/goals', '/plan/history', '/plan/periods', '/plan/planner-ai', '/plan/routines', '/plan/tasks', '/plan/templates', '/track/food', '/track/groceries', '/track/habits', '/track/meals', '/track/meds', '/track/mindful', '/track/recipe-ai', '/track/recipes', '/track/sleep', '/track/water', '/money/accounts', '/money/budgets', '/money/debts', '/money/expenses', '/money/income', '/money/recurring', '/money/savings', '/more/notes', '/more/purchases', '/more/settings', '/more/theme', '/more/wishlist']) {
     const before = problems.length;
