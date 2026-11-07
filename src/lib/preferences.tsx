@@ -40,7 +40,7 @@ interface Ctx {
   setProfile(p: Partial<Profile>): Promise<void>;
 }
 const C = createContext<Ctx | null>(null);
-const KEY = 'lifeos.prefs';
+const KEY = 'orchid.prefs';
 
 export function PreferencesProvider({ children }: { children: React.ReactNode }) {
   const { session } = useAuth();

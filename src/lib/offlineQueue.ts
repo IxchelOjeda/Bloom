@@ -68,10 +68,10 @@ export async function flush(state: QueueState, t: Transport): Promise<QueueState
 
 export const EMPTY: QueueState = { pending: [], failed: [] };
 
-export async function load(kv: KV, key = 'lifeos.queue'): Promise<QueueState> {
+export async function load(kv: KV, key = 'orchid.queue'): Promise<QueueState> {
   try { const raw = await kv.get(key); return raw ? (JSON.parse(raw) as QueueState) : EMPTY; } catch { return EMPTY; }
 }
-export async function save(kv: KV, s: QueueState, key = 'lifeos.queue') { await kv.set(key, JSON.stringify(s)); }
+export async function save(kv: KV, s: QueueState, key = 'orchid.queue') { await kv.set(key, JSON.stringify(s)); }
 
 /** Apply queued ops to cached rows so the UI shows offline edits immediately. */
 export function applyPending<T extends { id: string }>(rows: T[], table: string, pending: Op[]): T[] {

@@ -36,7 +36,7 @@ async function usda(q: string): Promise<Food[]> {
 }
 
 async function off(q: string, country?: string | null, barcode?: string | null): Promise<Food[]> {
-  const ua = { 'User-Agent': 'LifeOS/0.1 (personal organizer app)' };
+  const ua = { 'User-Agent': 'Orchid/0.1 (personal organizer app)' };
   const url = barcode
     ? `https://world.openfoodfacts.org/api/v2/product/${barcode}.json`
     : `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=20${country ? `&tagtype_0=countries&tag_contains_0=contains&tag_0=${country}` : ''}`;

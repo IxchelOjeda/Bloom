@@ -1,4 +1,4 @@
-# Bloom
+# Orchid
 
 A gentle, all-in-one life organizer for ADHD brains: planner, tasks, habits, meals, money and wellbeing, with an AI scheduling assistant and 20 aesthetic themes. Built with Expo + Supabase.
 
@@ -72,7 +72,7 @@ supabase db push                       # applies supabase/migrations/*.sql
 
 Then in the Supabase dashboard:
 
-1. **Authentication → URL configuration**: add `lifeos://**` to Redirect URLs (email confirmation and password reset deep links).
+1. **Authentication → URL configuration**: add `orchid://**` to Redirect URLs (email confirmation and password reset deep links).
 2. **Authentication → Providers → Email**: keep "Confirm email" on (recommended).
 3. The migration creates a private storage bucket `private` with per-user folders.
 

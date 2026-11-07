@@ -41,7 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async signOut() {
       await supabase.auth.signOut();
       // cached rows are per-user keyed, but clear them so a shared phone leaks nothing
-      const keys = (await AsyncStorage.getAllKeys()).filter((k) => k.startsWith('lifeos.cache.'));
+      const keys = (await AsyncStorage.getAllKeys()).filter((k) => k.startsWith('orchid.cache.'));
       await AsyncStorage.multiRemove(keys);
     },
     async resetPassword(email) {

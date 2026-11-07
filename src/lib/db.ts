@@ -118,7 +118,7 @@ export function useRows<T extends { id: string }>(table: string, key: string, qu
   const [error, setError] = useState<string | null>(null);
   const qRef = useRef(query); qRef.current = query;
   const fRef = useRef(filterLocal); fRef.current = filterLocal;
-  const cacheKey = `lifeos.cache.${currentUser}.${key}`;
+  const cacheKey = `orchid.cache.${currentUser}.${key}`;
 
   const withPending = useCallback((base: T[]) => {
     const merged = applyPending(base, table, queue.pending);

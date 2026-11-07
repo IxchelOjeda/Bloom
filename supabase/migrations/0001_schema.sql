@@ -1,5 +1,5 @@
 -- =====================================================================
--- LifeOS — core schema
+-- Orchid — core schema
 -- Every user-owned table has: id uuid (client may supply it, so offline
 -- writes are idempotent), user_id → auth.users, created_at, updated_at.
 -- RLS is enabled on every table at the bottom of this file.

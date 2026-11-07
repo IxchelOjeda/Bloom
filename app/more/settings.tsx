@@ -113,7 +113,7 @@ export default function Settings() {
           ])} />
         </Card>
       </Section>
-      <Txt size={12} muted style={{ textAlign: 'center', color: t.colors.textMuted }}>LifeOS 0.1</Txt>
+      <Txt size={12} muted style={{ textAlign: 'center', color: t.colors.textMuted }}>Orchid 0.1</Txt>
     </Screen>
   );
 }

@@ -26,7 +26,7 @@ export async function exportMyData(userId: string): Promise<void> {
     }
     out[t] = rows;
   }
-  const path = `${FileSystem.cacheDirectory}lifeos-export-${new Date().toISOString().slice(0, 10)}.json`;
+  const path = `${FileSystem.cacheDirectory}orchid-export-${new Date().toISOString().slice(0, 10)}.json`;
   await FileSystem.writeAsStringAsync(path, JSON.stringify({ exported_at: new Date().toISOString(), data: out }, null, 2));
-  if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(path, { mimeType: 'application/json', dialogTitle: 'Your LifeOS data' });
+  if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(path, { mimeType: 'application/json', dialogTitle: 'Your Orchid data' });
 }

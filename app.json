@@ -1,18 +1,18 @@
 {
   "expo": {
-    "name": "LifeOS",
-    "slug": "lifeos",
-    "scheme": "lifeos",
+    "name": "Orchid",
+    "slug": "orchid",
+    "scheme": "orchid",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.lifeos.app"
+      "bundleIdentifier": "com.orchid.app"
     },
     "android": {
-      "package": "com.lifeos.app",
+      "package": "com.orchid.app",
       "permissions": ["POST_NOTIFICATIONS", "SCHEDULE_EXACT_ALARM"]
     },
     "plugins": [

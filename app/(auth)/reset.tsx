@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { Button, Card, Field, Screen, Title, Txt } from '@/components/ui';
 
-/** Opened from the password-reset email deep link (lifeos://(auth)/reset#access_token=…). */
+/** Opened from the password-reset email deep link (orchid://(auth)/reset#access_token=…). */
 export default function Reset() {
   const { updatePassword } = useAuth();
   const url = Linking.useURL();
